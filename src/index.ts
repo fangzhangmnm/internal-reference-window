@@ -16,6 +16,7 @@ export type {
   RefLiveFrame,
   RefLiveProvider,
   RefLiveTarget,
+  RefLinkProvider,
   RefLabels,
   RefItem,
   RefMenuItem,

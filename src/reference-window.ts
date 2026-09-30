@@ -24,6 +24,10 @@
 //   牌组模型（./deck/deck.ts，零 DOM）。本组件 = 牌组的默认视图：卡片 / 顺序 / 当前页 / 每卡视图状态归牌组，
 //   解好的位图、画布小窗的帧、手势和 gizmo 归这里。对外的方法和事件保持原样（setItems / addImage / …），
 //   它们现在是牌组之上的薄包装；宿主也可以直接用 .deck。上面注释里的 ai-docs 路径都指 WeebPaint 仓。
+// ══ 0.3.0：文字卡 + 链接（user 2026-09-29「reference window能不能link图片页和文字页…一个立绘只用存一次」）══
+//   文字卡 = 只读、可选中、可滚动的一层 DOM（.text）：vp.scale = 字号倍率，vp.ty = 滚动位置；不走画布。
+//   链接卡 = bytes 为空但有 target 的非 live 卡：内容由宿主的 linkProvider(target, kind) 按需给（书里的某一页、
+//   某个图层…），只显示不存；宿主 deck.invalidate 就重取；给不出来 → 卡上如实写「内容不可用」。
 
 import { pinchScaleRot, solveAnchorTranslation } from "./pointer-gesture.ts";
 import type { GestureViewport } from "./pointer-gesture.ts";
@@ -42,6 +46,8 @@ export interface RefLiveWant { width: number; height: number }
 export type RefLiveFrame = RefLiveSource | { source: RefLiveSource; width: number; height: number };
 /** 出帧函数。两个参数都可以不理（WeebPaint 现有的 provider 就不理）。返回 null = 这一帧出不了，保留上一帧。 */
 export type RefLiveProvider = (want: RefLiveWant, target: string | null) => RefLiveFrame | null;
+/** 链接卡的内容端口：宿主按 target 给字节（图片 / 文字…）。null = 现在给不出来（页被删了、还没加载）。 */
+export type RefLinkProvider = (target: string, kind: string) => Promise<Blob | null> | Blob | null;
 /** ＋ 菜单里列哪些「宿主出画面的卡」。不给 = 只有一项，用 labels.live。 */
 export interface RefLiveTarget { target: string | null; label: string }
 export interface RefLabels {
@@ -54,6 +60,8 @@ export interface RefLabels {
   jump?: string;
   /** 没有名字的卡在跳转列表里叫什么，按种类给（如 image → 图片、live → 画布镜像）。 */
   kindNames?: Record<string, string>;
+  /** 链接卡取不到内容时卡上写什么。 */
+  linkMissing?: string;
 }
 // 多参考 item（组件运行时形；持久化映射在宿主 side-windows）。vp=null → 首次显示时 fit。
 export type RefItem =
@@ -87,6 +95,7 @@ const SPAWN_LEFT = 112, SPAWN_TOP = 104;      // v112/v267：默认避开 topbar
 const CLAMP_MIN_LEFT = 96, CLAMP_MIN_TOP = 96;   // v268b：旧持久化位置钳进安全区
 const DRAG_TOP_FLOOR = 60;                    // 拖窗 top 地板=出血区（v0.4.11，同 layers-panel）
 const MIN_EDGE = 96;                          // 丝薄：最小边（user 0830「最小宽度也需要能非常小」）
+const TEXT_SCALE_MIN = 0.5, TEXT_SCALE_MAX = 4;   // 文字卡字号倍率界限（基准 13px）
 
 interface PanelDragState { id: number; sx: number; sy: number; ol: number; ot: number; moved: boolean; }
 interface ResizeDragState { id: number; sx: number; sy: number; w0: number; h0: number; }
@@ -230,6 +239,21 @@ canvas:active { cursor: grabbing; }
 :host(.away) .plus, :host(.away) .close, :host(.away) .grip, :host(.away) .chips, :host(.away) .move { opacity: 0; }
 /* 菜单不在 shadow 里（2026-09-02）：挂 body 走 ui/popup-menu——absolute 子节点会被 :host overflow:hidden 裁、
    也困在 :host 的 stacking context 里被别的浮窗盖（老错误复发根因）。 */
+/* 文字卡：只读、可选中、可滚动。单指滚动交给浏览器（touch-action: pan-y），双指捏合调字号由组件接。
+   底色用主题底而不是点阵：字要能读。选中文字需要把焦点拿过来 → data-takes-focus 放行（其余 gizmo 不抢焦点）。 */
+.text {
+  position: absolute; inset: 0; display: none; overflow: auto; z-index: 1;
+  box-sizing: border-box; padding: 10px 12px 30px 12px;
+  color: var(--ink, #e8eaed);
+  background: color-mix(in srgb, var(--bg, #202124) 94%, transparent);
+  font-size: calc(13px * var(--ref-text-scale, 1)); line-height: 1.55;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+  user-select: text; -webkit-user-select: text;
+  touch-action: pan-y; cursor: text;
+  -webkit-overflow-scrolling: touch;
+}
+.text.shown { display: block; }
+.text.missing { color: var(--ink-soft, #9aa0a6); font-style: italic; }
 .empty {
   position: absolute; inset: 0;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -240,6 +264,7 @@ canvas:active { cursor: grabbing; }
 .empty ::slotted(*), .empty p { margin: 0; }
 </style>
 <canvas></canvas>
+<div class="text" part="text" data-takes-focus></div>
 <div class="empty"><slot name="empty"><p>＋ 导入参考图</p></slot></div>
 <div class="move" part="move"></div>
 <button class="plus" part="plus" type="button" aria-haspopup="true">${iconMarkup(REF_ICON_IDS.plus)}</button>
@@ -261,6 +286,8 @@ export class WpReferenceWindow extends HTMLElement {
   liveMinIntervalMs = LIVE_THROTTLE_MS;
   /** ＋ 菜单里列哪些画面（多台相机的宿主用）。null = 只列一项。 */
   liveTargets: (() => RefLiveTarget[]) | null = null;
+  /** 链接卡的内容端口（0.3.0）：bytes 为空、有 target 的非 live 卡从这里要内容。null = 这个宿主没有可链接的东西。 */
+  linkProvider: RefLinkProvider | null = null;
   // 宿主端口：＋ 菜单（一次性 set = ui/popup-menu 的 togglePopupMenu）。null = 没菜单（裸挂时 ＋ 无反应）。
   menuPort: RefMenuPort | null = null;
   /** 拖把地板（宿主注入 = ui/floating-window 运行时量的「顶栏下缘」；缺省 60 = 旧常数，裸挂可用）。
@@ -269,6 +296,7 @@ export class WpReferenceWindow extends HTMLElement {
 
   private _canvas: HTMLCanvasElement;
   private _cctx: CanvasRenderingContext2D;
+  private _textEl: HTMLElement;
   private _emptyEl: HTMLElement;
   private _plusEl: HTMLButtonElement;
   private _menu: RefMenuHandle | null = null;     // 菜单句柄（开着才非 null）
@@ -284,6 +312,13 @@ export class WpReferenceWindow extends HTMLElement {
   private _shownId: string | null = null;                   // 现在画着的是哪张卡
   private _bitmaps = new Map<string, RefBitmapSource>();    // 解好的位图，按卡 id
   private _decoding = new Set<string>();                    // 正在解的卡
+  private _texts = new Map<string, string>();               // 解好的文字，按卡 id
+  private _linked = new Map<string, Blob>();                // 链接卡取回来的字节（只显示不存）
+  private _linkMissing = new Set<string>();                 // 链接卡这次取不到（页删了…）
+  private _resolving = new Set<string>();                   // 正在向宿主要内容的链接卡
+  private _textPinch: { id: number; x: number; y: number }[] = [];   // 文字层上的指针（捏合调字号）
+  private _textPinchStart: { dist: number; scale: number } | null = null;
+  private _textScrollRaf: number | null = null;
   private _labels: RefLabels = {};
 
   private _liveSource: RefLiveSource | null = null;
@@ -316,6 +351,7 @@ export class WpReferenceWindow extends HTMLElement {
     const root = this.attachShadow({ mode: "open" });
     root.innerHTML = buildTemplate();
     this._canvas = root.querySelector("canvas")!;
+    this._textEl = root.querySelector(".text")!;
     this._emptyEl = root.querySelector(".empty")!;
     this._plusEl = root.querySelector(".plus")!;
     this._chipsEl = root.querySelector(".chips")!;
@@ -419,6 +455,16 @@ export class WpReferenceWindow extends HTMLElement {
     this._saveCurrentVp();
     const id = this._mute(() => this._deck.add({ kind: "image", bytes: blob, mime: blob?.type ?? "", name: opts?.name ?? "", origin: opts?.origin ?? null }));
     this._bitmaps.set(id, bitmap);
+    this._shownId = id;
+    this._loadCurrentVp({ fitIfMissing: true });
+    this._afterItemsChanged();
+  }
+  /** 追加一张文字卡并翻到它（0.3.0）。name 缺省取首行。 */
+  addText(text: string, opts?: { name?: string; origin?: string | null; mime?: string }) {
+    this._saveCurrentVp();
+    const mime = opts?.mime ?? "text/plain";
+    const id = this._mute(() => this._deck.add({ kind: "text", bytes: new Blob([text], { type: mime }), mime, name: opts?.name ?? "", origin: opts?.origin ?? null }));
+    this._texts.set(id, text);
     this._shownId = id;
     this._loadCurrentVp({ fitIfMissing: true });
     this._afterItemsChanged();
@@ -541,6 +587,7 @@ export class WpReferenceWindow extends HTMLElement {
   }
   /** fit 但不发事件（程序性初始适应；用户双击走 fitToPanel）。 */
   fitToPanelSilent() {
+    if (this._deck.current?.kind === "text") { this._vp = { tx: 0, ty: 0, scale: 1, rot: 0 }; this._saveCurrentVp(); this._updateTextLayer(); return; }
     const src = this._sourceSize();
     if (!src) return;
     const bw = this._canvas.width / (window.devicePixelRatio || 1);
@@ -584,7 +631,8 @@ export class WpReferenceWindow extends HTMLElement {
     this._emitItems();
   }
   private _cardLabel(c: Card, i: number): string {
-    const name = c.name || this._labels.kindNames?.[c.kind] || c.kind;
+    const firstLine = c.kind === "text" ? (this._texts.get(c.id) ?? "").split("\n").find((l) => l.trim())?.trim().slice(0, 24) : "";
+    const name = c.name || firstLine || this._labels.kindNames?.[c.kind] || c.kind;
     return `${i + 1}  ${name}`;
   }
   private _deleteCurrent() {
@@ -610,13 +658,20 @@ export class WpReferenceWindow extends HTMLElement {
   private _closeAllBitmaps() {
     for (const bm of this._bitmaps.values()) bm.close?.();
     this._bitmaps.clear();
+    this._texts.clear(); this._linked.clear(); this._linkMissing.clear();
   }
   /** 别人（宿主直接用 .deck、或共用这副牌的另一个视图）改了牌组。 */
   private _onDeckChange(what: DeckChange) {
     if (this._muted) return;
     if (what.type === "invalidate") {
-      if (this._deck.current?.id === what.id) this.markLiveDirty();
-      return;
+      const c = this._deck.get(what.id);
+      if (c?.kind === "live") { if (this._deck.current?.id === what.id) this.markLiveDirty(); return; }
+      // 链接卡：内容变了 → 扔掉手上那份，重新向宿主要
+      if (c && !c.bytes && c.target) {
+        this._linked.delete(c.id); this._linkMissing.delete(c.id);
+        this._texts.delete(c.id);
+        this._bitmaps.get(c.id)?.close?.(); this._bitmaps.delete(c.id);
+      }
     }
     this._syncFromDeck();
   }
@@ -625,8 +680,17 @@ export class WpReferenceWindow extends HTMLElement {
     for (const [id, bm] of this._bitmaps) {
       if (this._deck.indexOf(id) < 0) { bm.close?.(); this._bitmaps.delete(id); }
     }
+    for (const m of [this._texts, this._linked] as Map<string, unknown>[]) for (const id of [...m.keys()]) if (this._deck.indexOf(id) < 0) m.delete(id);
+    for (const id of [...this._linkMissing]) if (this._deck.indexOf(id) < 0) this._linkMissing.delete(id);
     for (const c of this._deck.cards()) {
-      if (c.kind === "image" && c.bytes && !this._bitmaps.has(c.id) && !this._decoding.has(c.id)) this._decode(c);
+      if (c.kind === "live") continue;
+      const bytes = c.bytes ?? this._linked.get(c.id) ?? null;
+      if (!bytes) {
+        if (c.target && !this._linkMissing.has(c.id) && !this._resolving.has(c.id)) this._resolveLink(c);
+        continue;
+      }
+      if (c.kind === "image" && !this._bitmaps.has(c.id) && !this._decoding.has(c.id)) this._decode(c, bytes);
+      else if (c.kind === "text" && !this._texts.has(c.id) && !this._decoding.has(c.id)) this._decodeText(c, bytes);
     }
     const cur = this._deck.current;
     if ((cur?.id ?? null) !== this._shownId) {
@@ -640,10 +704,10 @@ export class WpReferenceWindow extends HTMLElement {
     this._afterItemsChanged();
   }
   /** 只给了字节没给位图的图片卡（宿主直接往牌组里加的）：这里解。解不出来要说，不许装没事。 */
-  private _decode(c: Card) {
-    if (typeof createImageBitmap !== "function" || !c.bytes) return;
+  private _decode(c: Card, bytes: Blob) {
+    if (typeof createImageBitmap !== "function") return;
     this._decoding.add(c.id);
-    createImageBitmap(c.bytes).then((bm) => {
+    createImageBitmap(bytes).then((bm) => {
       this._decoding.delete(c.id);
       if (this._deck.indexOf(c.id) < 0 || this._bitmaps.has(c.id)) { bm.close?.(); return; }
       this._bitmaps.set(c.id, bm);
@@ -656,11 +720,57 @@ export class WpReferenceWindow extends HTMLElement {
       this._emit("notice", { level: "error", code: "decode-failed", id: c.id, name: c.name, message: String((e as { message?: unknown })?.message ?? e) });
     });
   }
+  private _decodeText(c: Card, bytes: Blob) {
+    this._decoding.add(c.id);
+    bytes.text().then((text) => {
+      this._decoding.delete(c.id);
+      if (this._deck.indexOf(c.id) < 0) return;
+      this._texts.set(c.id, text);
+      if (this._deck.current?.id === c.id) this._afterItemsChanged();
+    }, (e: unknown) => {
+      this._decoding.delete(c.id);
+      this._emit("notice", { level: "error", code: "decode-failed", id: c.id, name: c.name, message: String((e as { message?: unknown })?.message ?? e) });
+    });
+  }
+  /** 链接卡：向宿主要内容。要不到 → 记下「缺」，卡上如实写；宿主 invalidate 后再要。 */
+  private _resolveLink(c: Card) {
+    if (!this.linkProvider || !c.target) { this._linkMissing.add(c.id); if (this._deck.current?.id === c.id) this._afterItemsChanged(); return; }
+    this._resolving.add(c.id);
+    Promise.resolve().then(() => this.linkProvider!(c.target!, c.kind)).then((blob) => {
+      this._resolving.delete(c.id);
+      if (this._deck.indexOf(c.id) < 0) return;
+      if (blob) this._linked.set(c.id, blob); else this._linkMissing.add(c.id);
+      this._syncFromDeck();
+    }, (e: unknown) => {
+      this._resolving.delete(c.id);
+      this._linkMissing.add(c.id);
+      this._emit("notice", { level: "error", code: "link-failed", id: c.id, name: c.name, target: c.target, message: String((e as { message?: unknown })?.message ?? e) });
+      this._syncFromDeck();
+    });
+  }
   private _afterItemsChanged() {
     if (!this.live) this._stopLiveTimer();
     this._updateEmptyHint();
     this._updateChips();
+    this._updateTextLayer();
     this._invalidate();
+  }
+  /** 文字卡：内容层显示 / 隐藏 + 灌内容 + 字号 + 滚动位置。 */
+  private _updateTextLayer() {
+    const cur = this._deck.current;
+    const isText = cur?.kind === "text";
+    this._textEl.classList.toggle("shown", isText);
+    this._canvas.style.visibility = isText ? "hidden" : "";
+    if (!isText || !cur) return;
+    const text = this._texts.get(cur.id);
+    const missing = text === undefined && this._linkMissing.has(cur.id);
+    this._textEl.classList.toggle("missing", missing);
+    const content = text ?? (missing ? (this._labels.linkMissing ?? "Content unavailable") : "");
+    if (this._textEl.textContent !== content) this._textEl.textContent = content;
+    this._textEl.style.setProperty("--ref-text-scale", String(this._vp.scale));
+    // 滚动位置：内容刚灌进去时 scrollHeight 还没长出来，下一帧再对
+    const ty = this._vp.ty;
+    if (Math.abs(this._textEl.scrollTop - ty) > 0.5) requestAnimationFrame(() => { if (this._deck.current?.id === cur.id) this._textEl.scrollTop = ty; });
   }
   private _updateChips() {
     const n = this._deck.size;
@@ -787,6 +897,50 @@ export class WpReferenceWindow extends HTMLElement {
     };
     grip.addEventListener("pointerup", endResize);
     grip.addEventListener("pointercancel", endResize);
+
+    // 文字层（0.3.0）：单指滚动 / 选字归浏览器；双指捏合 = 字号；ctrl+滚轮 = 字号；滚动位置进牌组（不标脏）
+    const tx = this._textEl;
+    tx.addEventListener("scroll", () => {
+      if (this._textScrollRaf != null) return;
+      this._textScrollRaf = requestAnimationFrame(() => {
+        this._textScrollRaf = null;
+        if (this._deck.current?.kind !== "text") return;
+        this._vp.ty = tx.scrollTop;
+        this._saveCurrentVp();
+        this._emitViewport();
+      });
+    }, { passive: true });
+    tx.addEventListener("pointerdown", (e) => {
+      this._textPinch.push({ id: e.pointerId, x: e.clientX, y: e.clientY });
+      if (this._textPinch.length === 2) {
+        const [a, b] = this._textPinch;
+        this._textPinchStart = { dist: Math.hypot(b.x - a.x, b.y - a.y) || 1, scale: this._vp.scale };
+        try { tx.setPointerCapture(e.pointerId); } catch {}
+        e.preventDefault();
+      }
+    });
+    tx.addEventListener("pointermove", (e) => {
+      const p = this._textPinch.find((q) => q.id === e.pointerId);
+      if (!p) return;
+      p.x = e.clientX; p.y = e.clientY;
+      if (this._textPinch.length >= 2 && this._textPinchStart) {
+        const [a, b] = this._textPinch;
+        const dist = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+        this._setTextScale(this._textPinchStart.scale * (dist / this._textPinchStart.dist));
+        e.preventDefault();
+      }
+    });
+    const endTextPointer = (e: PointerEvent) => {
+      this._textPinch = this._textPinch.filter((q) => q.id !== e.pointerId);
+      if (this._textPinch.length < 2) this._textPinchStart = null;
+    };
+    tx.addEventListener("pointerup", endTextPointer);
+    tx.addEventListener("pointercancel", endTextPointer);
+    tx.addEventListener("wheel", (e) => {
+      if (!(e.ctrlKey || e.metaKey)) return;   // 普通滚轮 = 滚动，归浏览器
+      e.preventDefault();
+      this._setTextScale(this._vp.scale * Math.exp(-e.deltaY * 0.005));
+    }, { passive: false });
 
     // 内部画布手势（pan / pinch / rotate / wheel / 双击适应 / 吸色）
     this._canvas.addEventListener("pointerdown", (e) => this._onDown(e), { passive: false });
@@ -999,6 +1153,15 @@ export class WpReferenceWindow extends HTMLElement {
     this._saveCurrentVp();
     this._emitViewport();
     this._invalidate();
+  }
+
+  private _setTextScale(scale: number) {
+    const s = clamp(scale, TEXT_SCALE_MIN, TEXT_SCALE_MAX);
+    if (s === this._vp.scale) return;
+    this._vp.scale = s;
+    this._textEl.style.setProperty("--ref-text-scale", String(s));
+    this._saveCurrentVp();
+    this._emitViewport();
   }
 
   // ---- 吸色（v154；宿主拿事件接主吸色 setColor + pin）----

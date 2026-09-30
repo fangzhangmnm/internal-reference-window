@@ -166,7 +166,12 @@ export declare interface RefLabels {
     jump?: string;
     /** 没有名字的卡在跳转列表里叫什么，按种类给（如 image → 图片、live → 画布镜像）。 */
     kindNames?: Record<string, string>;
+    /** 链接卡取不到内容时卡上写什么。 */
+    linkMissing?: string;
 }
+
+/** 链接卡的内容端口：宿主按 target 给字节（图片 / 文字…）。null = 现在给不出来（页被删了、还没加载）。 */
+export declare type RefLinkProvider = (target: string, kind: string) => Promise<Blob | null> | Blob | null;
 
 /** 宿主交回的一帧。直接给画面 = 画面的像素尺寸就是这张卡的尺寸（WeebPaint 的画布小窗）。
  *  按提示出了小尺寸的宿主要另外说明这张卡「本来多大」（source 之外带 width / height），否则窗口一变大小，同样的缩放下图就跟着变大变小。 */
@@ -240,12 +245,15 @@ export declare class WpReferenceWindow extends HTMLElement {
     liveMinIntervalMs: number;
     /** ＋ 菜单里列哪些画面（多台相机的宿主用）。null = 只列一项。 */
     liveTargets: (() => RefLiveTarget[]) | null;
+    /** 链接卡的内容端口（0.3.0）：bytes 为空、有 target 的非 live 卡从这里要内容。null = 这个宿主没有可链接的东西。 */
+    linkProvider: RefLinkProvider | null;
     menuPort: RefMenuPort | null;
     /** 拖把地板（宿主注入 = ui/floating-window 运行时量的「顶栏下缘」；缺省 60 = 旧常数，裸挂可用）。
      *  拖 / 恢复 / 视口钳制三条路都吃它——出血区规则只准一个出处（2026-09-02 C2）。 */
     topFloor: number;
     private _canvas;
     private _cctx;
+    private _textEl;
     private _emptyEl;
     private _plusEl;
     private _menu;
@@ -259,6 +267,13 @@ export declare class WpReferenceWindow extends HTMLElement {
     private _shownId;
     private _bitmaps;
     private _decoding;
+    private _texts;
+    private _linked;
+    private _linkMissing;
+    private _resolving;
+    private _textPinch;
+    private _textPinchStart;
+    private _textScrollRaf;
     private _labels;
     private _liveSource;
     private _liveSize;
@@ -297,6 +312,12 @@ export declare class WpReferenceWindow extends HTMLElement {
     addImage(bitmap: RefBitmapSource, blob: Blob | null, opts?: {
         name?: string;
         origin?: string | null;
+    }): void;
+    /** 追加一张文字卡并翻到它（0.3.0）。name 缺省取首行。 */
+    addText(text: string, opts?: {
+        name?: string;
+        origin?: string | null;
+        mime?: string;
     }): void;
     /** 画布镜像页：已有 → 翻过去；没有 → 追加并翻到（liveProvider 缺席 = no-op）。 */
     showLive(target?: string | null, name?: string): void;
@@ -346,7 +367,12 @@ export declare class WpReferenceWindow extends HTMLElement {
     private _syncFromDeck;
     /** 只给了字节没给位图的图片卡（宿主直接往牌组里加的）：这里解。解不出来要说，不许装没事。 */
     private _decode;
+    private _decodeText;
+    /** 链接卡：向宿主要内容。要不到 → 记下「缺」，卡上如实写；宿主 invalidate 后再要。 */
+    private _resolveLink;
     private _afterItemsChanged;
+    /** 文字卡：内容层显示 / 隐藏 + 灌内容 + 字号 + 滚动位置。 */
+    private _updateTextLayer;
     private _updateChips;
     private _sourceSize;
     private _afterShow;
@@ -365,6 +391,7 @@ export declare class WpReferenceWindow extends HTMLElement {
     private _onMove;
     private _onUp;
     private _onWheel;
+    private _setTextScale;
     private _cancelLongPress;
     private _beginPick;
     private _endPick;

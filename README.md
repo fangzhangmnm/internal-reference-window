@@ -1,6 +1,6 @@
 # @internal/reference-window
 
-> created 2026-09-29 by Claude Fable 5.1 · as-of 0.2.0（2026-09-29；0.1.0 同日首版）· 源 = WeebPaint v0.14.20 `src/frontend/reference-window.ts`
+> created 2026-09-29 by Claude Fable 5.1 · as-of 0.3.0 开发中（已发 0.1.0 / 0.2.0，2026-09-29）· 源 = WeebPaint v0.14.20 `src/frontend/reference-window.ts`
 
 PWA 家族的参考窗：一个浮在工作区上的小窗，放参考图、画布小窗这类「一直在场」的东西。
 
@@ -10,11 +10,13 @@ import { WpReferenceWindow } from "@internal/reference-window";   // import 即�
 const ref = document.querySelector("wp-reference-window") as WpReferenceWindow;
 ref.menuPort = togglePopupMenu;          // 宿主注入：弹出菜单
 ref.liveProvider = () => myCanvas;       // 宿主注入：画布小窗的画面
+ref.linkProvider = async (target) => bytesOfPage(target);   // 宿主注入（0.3.0）：链接卡按 target 取内容（书里的某一页…），只显示不存
 ref.labels = { load: "导入图片", /* … */ };
 ref.open = true;
 ```
 
 - 宿主要做的：把家族图标 sprite 内联进页面；提供 CSS 变量（`--bg --ink --ink-soft --line --radius --shadow --z-window`，全有缺省值）；把组件发出的事件拿去持久化。
+- 卡片种类（0.3.0）：图片、文字（只读、可选中、可滚动；捏合 / ctrl+滚轮调字号）、宿主出画面的卡（live）；任何一种都可以是**链接卡**（`bytes` 为空 + `target`，内容由宿主的 `linkProvider` 按需给，`deck.invalidate` 重取，给不出来卡上如实写）。
 - 本库不做的：不存任何东西、不联网、不决定压缩政策。
 
 ## 数据契约 = 容器里的一个目录（0.2.0）

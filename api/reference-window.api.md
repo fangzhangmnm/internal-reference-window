@@ -179,6 +179,7 @@ export interface RefLabels {
     delConfirm?: string;
     jump?: string;
     kindNames?: Record<string, string>;
+    linkMissing?: string;
     // (undocumented)
     live?: string;
     // (undocumented)
@@ -203,6 +204,9 @@ export interface RefLabels {
     // (undocumented)
     resizeAria?: string;
 }
+
+// @public
+export type RefLinkProvider = (target: string, kind: string) => Promise<Blob | null> | Blob | null;
 
 // @public
 export type RefLiveFrame = RefLiveSource | {
@@ -309,6 +313,11 @@ export class WpReferenceWindow extends HTMLElement {
         name?: string;
         origin?: string | null;
     }): void;
+    addText(text: string, opts?: {
+        name?: string;
+        origin?: string | null;
+        mime?: string;
+    }): void;
     // (undocumented)
     attributeChangedCallback(name: string, oldV: string | null, newV: string | null): void;
     clearAll(): void;
@@ -337,6 +346,7 @@ export class WpReferenceWindow extends HTMLElement {
     get itemCount(): number;
     // (undocumented)
     set labels(l: RefLabels);
+    linkProvider: RefLinkProvider | null;
     // (undocumented)
     get live(): boolean;
     liveMinIntervalMs: number;

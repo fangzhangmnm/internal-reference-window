@@ -260,6 +260,101 @@ async function reorderAndJump() {
   el.remove(); one.remove();
 }
 
+const textEl = (el) => el.shadowRoot.querySelector(".text");
+const textShown = (el) => textEl(el).classList.contains("shown");
+
+async function textCards() {
+  const el = mount(), log = listen(el), menu = fakeMenu(el);
+  el.labels = { kindNames: { text: "文字" }, linkMissing: "内容不可用" };
+  const body = "第一行是标题\n" + Array.from({ length: 80 }, (_, i) => `第 ${i + 2} 行：东北西南规则，G_μν = 8πT_μν`).join("\n");
+  el.addText(body, { name: "" });
+  await frame();
+  add("text:加文字卡 → 文字层显示、画布藏起来、内容对", textShown(el) && textEl(el).textContent === body && el.shadowRoot.querySelector("canvas").style.visibility === "hidden", `shown=${textShown(el)}`);
+  add("text:文字层可选中（放行焦点）", getComputedStyle(textEl(el)).userSelect === "text" && textEl(el).hasAttribute("data-takes-focus"), getComputedStyle(textEl(el)).userSelect);
+  add("text:字号倍率 = vp.scale，初始 1", el.viewport.scale === 1 && getComputedStyle(textEl(el)).getPropertyValue("--ref-text-scale").trim() === "1", JSON.stringify(el.viewport));
+
+  // 滚动位置进牌组
+  textEl(el).scrollTop = 120; await frame(); await frame();
+  add("text:滚动 → vp.ty 记进牌组，发 viewportchange", el.deck.current.vp?.ty === 120 && names(log).includes("viewportchange"), `ty=${el.deck.current.vp?.ty} events=${names(log)}`);
+
+  // ctrl+滚轮 = 字号
+  textEl(el).dispatchEvent(new WheelEvent("wheel", { deltaY: -200, ctrlKey: true, bubbles: true, cancelable: true }));
+  await frame();
+  const sc = el.viewport.scale;
+  add("text:ctrl+滚轮 → 字号变大、写进 CSS 变量和牌组", sc > 1 && getComputedStyle(textEl(el)).getPropertyValue("--ref-text-scale").trim() === String(sc) && el.deck.current.vp.scale === sc, `scale=${sc}`);
+
+  // 跳转列表：没名字的文字卡用首行
+  el.addText("次要备忘\n无关", { name: "" }); await frame();
+  el.shadowRoot.querySelector("[data-jump]").click();
+  const labels = menu.opts.items().map((i) => i.label);
+  add("text:跳转列表用首行当名字", labels.join("|") === "1  第一行是标题|2  次要备忘", labels.join("|"));
+  menu.opts.onClose?.();
+
+  // 翻回第一张：滚动位置和字号原样回来（调字号后浏览器的滚动锚定会微调 scrollTop，组件如实记下的那个值才是基准）
+  const savedTy = el.deck.cards()[0].vp.ty;
+  el.shadowRoot.querySelector('[data-page="-1"]').click(); await frame(); await frame();
+  add("text:翻回来 → 字号和滚动位置原样", Math.abs(textEl(el).scrollTop - savedTy) < 1 && savedTy >= 120 && el.viewport.scale === sc, `scrollTop=${textEl(el).scrollTop} saved=${savedTy} scale=${el.viewport.scale}`);
+
+  // 翻到图片卡：文字层藏、画布回来
+  el.deck.add({ kind: "image", bytes: await png("#ff0000") });
+  await until(() => center(el) === RED);
+  add("text:翻到图片卡 → 文字层藏起来、画布回来", !textShown(el) && center(el) === RED, `shown=${textShown(el)} ${center(el)}`);
+
+  // 编码：文字卡落 .txt
+  const { encodeDeck } = await import("/dist/deck/index.js");
+  const files = encodeDeck(el.deck.snapshot(), { app: "probe" });
+  add("text:编码成 .txt 字节", [...files.keys()].some((k) => k.endsWith("r0.txt")), [...files.keys()].join("|"));
+  el.remove();
+}
+
+async function linkedCards() {
+  const el = mount(), log = listen(el);
+  el.labels = { linkMissing: "内容不可用" };
+  const pages = { "page:1": "设定：主角是一只猫\n第二行", "page:2": null };
+  const asked = [];
+  el.linkProvider = async (target, kind) => {
+    asked.push(`${kind}@${target}`);
+    if (target === "page:img") return await png("#0000ff");
+    if (target === "page:boom") throw new Error("boom");
+    const t = pages[target]; return t == null ? null : new Blob([t], { type: "text/plain" });
+  };
+  const idT = el.deck.add({ kind: "text", target: "page:1", name: "设定页" });
+  await until(() => textShown(el) && textEl(el).textContent.startsWith("设定"));
+  add("link:文字链接卡 → 向宿主要内容并显示；卡里没有字节", textEl(el).textContent === pages["page:1"] && el.deck.current.bytes === null && asked.includes("text@page:1"), `asked=${asked.join(",")}`);
+
+  // 页改了 → invalidate → 重取
+  pages["page:1"] = "设定：主角是一只狗";
+  el.deck.invalidate(idT);
+  await until(() => textEl(el).textContent === "设定：主角是一只狗");
+  add("link:宿主 invalidate → 重新要、内容更新", textEl(el).textContent === "设定：主角是一只狗" && asked.filter((a) => a === "text@page:1").length === 2, `asked=${asked.join(",")}`);
+
+  // 页删了 → 如实占位
+  const idM = el.deck.add({ kind: "text", target: "page:2", name: "被删的页" });
+  await until(() => textEl(el).classList.contains("missing"));
+  add("link:宿主给不出来 → 卡上如实写「内容不可用」", textEl(el).textContent === "内容不可用" && textEl(el).classList.contains("missing"), textEl(el).textContent);
+
+  // 图片链接卡
+  const idI = el.deck.add({ kind: "image", target: "page:img" });
+  await until(() => center(el) === BLUE);
+  add("link:图片链接卡 → 库解出来画上，文字层藏", center(el) === BLUE && !textShown(el), center(el));
+
+  // 宿主端口抛错 → notice，不吞
+  let notice = null; el.addEventListener("notice", (e) => { notice = e.detail; }, { once: true });
+  el.deck.add({ kind: "text", target: "page:boom" });
+  await until(() => notice);
+  add("link:宿主端口抛错 → 发 notice(link-failed)", notice?.code === "link-failed" && notice?.target === "page:boom", JSON.stringify(notice));
+
+  // 编码：链接卡只有 target，没有 src
+  const { encodeDeck } = await import("/dist/deck/index.js");
+  const files = encodeDeck(el.deck.snapshot(), { app: "probe" });
+  const m = JSON.parse(await files.get(".probe/references/manifest.json").text());
+  add("link:编码后链接卡只有 target 没有字节文件（立绘只存一次）",
+    m.items.every((i) => i.target && !i.src) && files.size === 1,
+    `${JSON.stringify(m.items.map((i) => ({ k: i.kind, t: i.target, s: i.src })))} files=${files.size}`);
+  void idM; void idI; void log;
+  el.remove();
+}
+
 try {
   await customElements.whenDefined("wp-reference-window");
   await deckDriven();
@@ -267,6 +362,8 @@ try {
   await liveViaDeck();
   await liveGeneral();
   await reorderAndJump();
+  await textCards();
+  await linkedCards();
 } catch (e) {
   add("探针自己炸了", false, String(e?.stack ?? e));
 }
