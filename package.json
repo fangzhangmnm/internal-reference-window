@@ -1,0 +1,21 @@
+{
+  "name": "@internal/reference-window",
+  "version": "0.0.0",
+  "description": "PWA 家族参考窗：屏幕上一直在场的那个位子（参考图 / 画布小窗 …）。源 = WeebPaint src/frontend/reference-window.ts；持久化、压缩、菜单、图标全由宿主注入。",
+  "type": "module",
+  "license": "MIT",
+  "files": ["dist", "src", "README.md"],
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" }
+  },
+  "scripts": {
+    "build": "bash scripts/build.sh",
+    "test": "node test/run.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "release": "bash scripts/release.sh"
+  },
+  "devDependencies": {
+    "@microsoft/api-extractor": "^7.58.12",
+    "typescript": "5.7.3"
+  }
+}
