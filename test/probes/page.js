@@ -127,11 +127,101 @@ async function liveViaDeck() {
   el.remove();
 }
 
+/** 假菜单：记下组件交来的菜单内容，探针自己挑一项点。 */
+function fakeMenu(el) {
+  const st = { opts: null, opens: 0 };
+  el.menuPort = (opts) => { st.opts = opts; st.opens++; return { close() { opts.onClose?.(); st.opts = null; }, refresh() {}, isOpen: true }; };
+  st.items = () => { el.shadowRoot.querySelector(".plus").click(); return st.opts.items().filter((i) => !i.hidden); };
+  st.pick = (id) => st.opts.onPick(id);
+  return st;
+}
+function solid(color, w = 16, h = 16) {
+  const c = document.createElement("canvas"); c.width = w; c.height = h;
+  const x = c.getContext("2d"); x.fillStyle = color; x.fillRect(0, 0, w, h);
+  return c;
+}
+
+async function liveGeneral() {
+  // 1) 要帧时带上窗口的像素尺寸和 target
+  const el = mount(), log = listen(el), menu = fakeMenu(el);
+  add("live:宿主没给出帧函数 → ＋ 菜单里不列这一项", !menu.items().some((i) => i.id.startsWith("live")), menu.items().map((i) => i.id).join(","));
+  menu.opts && el.menuPort && menu.opts.onClose?.();
+
+  const asked = [];
+  const frames = { "cam:A": solid("#ff0000"), "cam:B": solid("#0000ff") };
+  el.liveProvider = (want, target) => { asked.push({ want, target }); return frames[target] ?? solid("#00ff00"); };
+  el.liveTargets = () => [{ target: "cam:A", label: "正面" }, { target: "cam:B", label: "侧面" }];
+  const ids = menu.items().map((i) => i.id).filter((i) => i.startsWith("live"));
+  add("live:多台相机 → ＋ 菜单里一台一项", ids.join(",") === "live:cam:A,live:cam:B", ids.join(","));
+
+  log.length = 0;
+  menu.pick("live:cam:A");
+  await until(() => center(el) === RED);
+  const cv = el.shadowRoot.querySelector("canvas");
+  const last = asked.at(-1);
+  add("live:从菜单加一台相机 → 画出来，卡上记着 target 和名字，发 itemschange",
+    center(el) === RED && el.deck.current.target === "cam:A" && el.deck.current.name === "正面" && names(log).includes("itemschange"),
+    `${center(el)} target=${el.deck.current?.target} name=${el.deck.current?.name} events=${names(log)}`);
+  add("live:要帧时带上窗口的设备像素尺寸和 target",
+    last.target === "cam:A" && last.want.width === cv.width && last.want.height === cv.height && cv.width > 0,
+    `want=${last.want.width}x${last.want.height} canvas=${cv.width}x${cv.height} target=${last.target}`);
+
+  // 2) 两台相机之间翻页：第一帧立刻是对的，不许先画一下上一台的画面。把间隔调到很长，毛病藏不住。
+  el.liveMinIntervalMs = 5000;
+  menu.pick("live:cam:B");
+  await frame();
+  add("live:翻到另一台相机 → 第一帧立刻是它自己的画面", center(el) === BLUE && el.deck.size === 2, `${center(el)} size=${el.deck.size}`);
+  el.shadowRoot.querySelector('[data-page="-1"]').click();
+  await frame();
+  add("live:翻回来 → 也立刻是对的", center(el) === RED, center(el));
+  menu.pick("live:cam:A");
+  add("live:同一台相机再点一次 → 翻过去，不重复加卡", el.deck.size === 2 && el.deck.current.target === "cam:A", `size=${el.deck.size}`);
+
+  // 3) 只报某一台变了：当前看的不是它就不理
+  el.liveMinIntervalMs = 0;
+  await wait(50);
+  const n0 = asked.length;
+  el.markLiveDirty("cam:B"); await frame(); await frame();
+  add("live:报的是别的相机变了 → 不要帧", asked.length === n0, `asked ${n0}→${asked.length}`);
+  frames["cam:A"] = solid("#00ff00");
+  el.markLiveDirty("cam:A");
+  await until(() => center(el) === GREEN, 1000);
+  add("live:报的是当前这台变了 → 重新要帧", center(el) === GREEN && asked.length > n0, `${center(el)} asked ${n0}→${asked.length}`);
+  el.remove();
+
+  // 4) 间隔归宿主定
+  const fast = mount();
+  let color = "#ff0000", t = [];
+  fast.liveProvider = () => { t.push(performance.now()); return solid(color); };
+  fast.liveMinIntervalMs = 40;
+  fast.showLive();
+  await until(() => center(fast) === RED);
+  await wait(200);
+  color = "#0000ff"; const t0 = performance.now();
+  fast.markLiveDirty();
+  await until(() => center(fast) === BLUE, 1000);
+  const took = performance.now() - t0;
+  add("live:间隔调成 40 毫秒 → 新画面 200 毫秒内到（缺省 300 毫秒做不到）", center(fast) === BLUE && took < 200, `${Math.round(took)}ms`);
+  fast.remove();
+
+  // 5) 宿主按提示出了小尺寸的帧，并说明这张卡本来多大
+  const small = mount();
+  small.liveProvider = () => ({ source: solid("#ff0000", 16, 8), width: 320, height: 160 });
+  small.showLive();
+  await until(() => center(small) === RED);
+  const cw = small.clientWidth, ch = small.clientHeight;
+  const expect = Math.min(cw / 320, ch / 160) * 0.95;
+  add("live:按卡「本来的大小」来适应窗口，不按这一帧的像素数", Math.abs(small.viewport.scale - expect) < 1e-6 && center(small) === RED,
+    `scale=${small.viewport.scale.toFixed(4)} expect=${expect.toFixed(4)} window=${cw}x${ch}`);
+  small.remove();
+}
+
 try {
   await customElements.whenDefined("wp-reference-window");
   await deckDriven();
   await sharedDeck();
   await liveViaDeck();
+  await liveGeneral();
 } catch (e) {
   add("探针自己炸了", false, String(e?.stack ?? e));
 }

@@ -198,8 +198,34 @@ export interface RefLabels {
     resizeAria?: string;
 }
 
+// @public
+export type RefLiveFrame = RefLiveSource | {
+    source: RefLiveSource;
+    width: number;
+    height: number;
+};
+
+// @public
+export type RefLiveProvider = (want: RefLiveWant, target: string | null) => RefLiveFrame | null;
+
 // @public (undocumented)
 export type RefLiveSource = HTMLCanvasElement | OffscreenCanvas | ImageBitmap;
+
+// @public
+export interface RefLiveTarget {
+    // (undocumented)
+    label: string;
+    // (undocumented)
+    target: string | null;
+}
+
+// @public
+export interface RefLiveWant {
+    // (undocumented)
+    height: number;
+    // (undocumented)
+    width: number;
+}
 
 // @public (undocumented)
 export interface RefMenuHandle {
@@ -304,10 +330,12 @@ export class WpReferenceWindow extends HTMLElement {
     set labels(l: RefLabels);
     // (undocumented)
     get live(): boolean;
+    liveMinIntervalMs: number;
     // (undocumented)
-    liveProvider: (() => RefLiveSource | null) | null;
+    liveProvider: RefLiveProvider | null;
+    liveTargets: (() => RefLiveTarget[]) | null;
     // (undocumented)
-    markLiveDirty(): void;
+    markLiveDirty(target?: string | null): void;
     // (undocumented)
     menuPort: RefMenuPort | null;
     // (undocumented)
@@ -320,7 +348,7 @@ export class WpReferenceWindow extends HTMLElement {
     get rect(): RefPanelRect;
     set rect(o: Partial<RefPanelRect> | null | undefined);
     setItems(items: RefItem[], index?: number): void;
-    showLive(): void;
+    showLive(target?: string | null, name?: string): void;
     topFloor: number;
     // (undocumented)
     get viewport(): RefViewport;

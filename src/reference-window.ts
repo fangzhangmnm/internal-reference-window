@@ -35,6 +35,15 @@ export interface RefPanelRect { left: number; top: number; width: number; height
 // bitmap 源：鸭子 union（只用 .close?.()/.width/.height/drawImage）。
 export type RefBitmapSource = (ImageBitmap | HTMLImageElement | HTMLCanvasElement | OffscreenCanvas) & { close?: () => void };
 export type RefLiveSource = HTMLCanvasElement | OffscreenCanvas | ImageBitmap;
+/** 要帧时告诉宿主：窗口现在有多少设备像素。只是提示——「铺满窗口看，这么多像素就够了」。 */
+export interface RefLiveWant { width: number; height: number }
+/** 宿主交回的一帧。直接给画面 = 画面的像素尺寸就是这张卡的尺寸（WeebPaint 的画布小窗）。
+ *  按提示出了小尺寸的宿主要另外说明这张卡「本来多大」（width/height），否则窗口一变大小，同样的缩放下图就跟着变大变小。 */
+export type RefLiveFrame = RefLiveSource | { source: RefLiveSource; width: number; height: number };
+/** 出帧函数。两个参数都可以不理（WeebPaint 现有的 provider 就不理）。返回 null = 这一帧出不了，保留上一帧。 */
+export type RefLiveProvider = (want: RefLiveWant, target: string | null) => RefLiveFrame | null;
+/** ＋ 菜单里列哪些「宿主出画面的卡」。不给 = 只有一项，用 labels.live。 */
+export interface RefLiveTarget { target: string | null; label: string }
 export interface RefLabels {
   load?: string; paste?: string; cloud?: string; live?: string; oneToOne?: string;
   del?: string; delConfirm?: string; closeWin?: string;
@@ -59,7 +68,7 @@ export type RefMenuPort = (opts: RefMenuOpts) => RefMenuHandle | null;
 
 const REF_LONG_PRESS_MS = 450;                // 长按吸色延迟（对齐 input.ts）
 const REF_LONG_PRESS_CANCEL_SQ = 64;          // 8px²：长按期间移动超此 → 取消，回 pan
-const LIVE_THROTTLE_MS = 300;                 // S9：live 全量合成节流；到期 timer 补帧收尾
+const LIVE_THROTTLE_MS = 300;                 // S9：live 全量合成节流；到期 timer 补帧收尾。这是缺省值，宿主按自己的出帧成本改 liveMinIntervalMs
 const IDLE_DIM_MS = 2500;                     // 闲置淡出（.35 透明度）
 const NEAREST_MIN_SCALE = 2;                  // 放大 nearest 阈值（像素画 friendly；与编辑器手感对齐可调）
 // 缩放护栏（user 0830）：放大顶 50×；缩小只护到「眼睛能看到」——长边显示 ≥16px 即可
@@ -238,8 +247,12 @@ canvas:active { cursor: grabbing; }
 export class WpReferenceWindow extends HTMLElement {
   static get observedAttributes() { return ["open", "no-cloud"]; }   // no-cloud：宿主云功能关 → 藏云盘选图项
 
-  // 宿主端口：live 合成 provider（一次性 set；组件在当前页 kind=live 时消费）。null = 合成不可用保上帧。
-  liveProvider: (() => RefLiveSource | null) | null = null;
+  // 宿主端口：live 合成 provider（一次性 set；组件在当前页 kind=live 时消费）。null = 这个宿主没有画面可出。
+  liveProvider: RefLiveProvider | null = null;
+  /** 两帧之间至少隔多久（毫秒）。归宿主定：只有宿主知道自己出一帧多贵。缺省 300 = WeebPaint 现值。 */
+  liveMinIntervalMs = LIVE_THROTTLE_MS;
+  /** ＋ 菜单里列哪些画面（多台相机的宿主用）。null = 只列一项。 */
+  liveTargets: (() => RefLiveTarget[]) | null = null;
   // 宿主端口：＋ 菜单（一次性 set = ui/popup-menu 的 togglePopupMenu）。null = 没菜单（裸挂时 ＋ 无反应）。
   menuPort: RefMenuPort | null = null;
   /** 拖把地板（宿主注入 = ui/floating-window 运行时量的「顶栏下缘」；缺省 60 = 旧常数，裸挂可用）。
@@ -265,6 +278,8 @@ export class WpReferenceWindow extends HTMLElement {
   private _labels: RefLabels = {};
 
   private _liveSource: RefLiveSource | null = null;
+  private _liveSize: { w: number; h: number } | null = null;   // 这张卡「本来多大」（宿主没说 = 画面的像素尺寸）
+  private _liveOf: string | null = null;                        // 手上这一帧是哪张卡的
   private _liveDirty = false;
   private _lastLiveComposeT: number | undefined;
   private _liveThrottle: ReturnType<typeof setTimeout> | null = null;
@@ -399,11 +414,11 @@ export class WpReferenceWindow extends HTMLElement {
     this._afterItemsChanged();
   }
   /** 画布镜像页：已有 → 翻过去；没有 → 追加并翻到（liveProvider 缺席 = no-op）。 */
-  showLive() {
+  showLive(target: string | null = null, name = "") {
     if (!this.liveProvider) return;
-    const i = this._deck.cards().findIndex((c) => c.kind === "live");
+    const i = this._deck.cards().findIndex((c) => c.kind === "live" && (c.target ?? null) === target);
     this._saveCurrentVp();
-    this._mute(() => { if (i >= 0) this._deck.select(i); else this._deck.add({ kind: "live" }); });
+    this._mute(() => { if (i >= 0) this._deck.select(i); else this._deck.add({ kind: "live", target, name }); });
     this._shownId = this._deck.current?.id ?? null;
     this._liveDirty = true;
     this._loadCurrentVp({ fitIfMissing: true });
@@ -483,8 +498,10 @@ export class WpReferenceWindow extends HTMLElement {
   }
 
   // 宿主在 doc 像素/结构变化时调（组件不监听宿主全局事件）。真合成在 _render 里按脏标+节流做。
-  markLiveDirty() {
+  //   target 不给 = 「有东西变了」（WeebPaint 现有用法）；给了 = 只有那一个画面变了，当前看的不是它就不理。
+  markLiveDirty(target?: string | null) {
     if (!this.live) return;
+    if (target !== undefined && (this._deck.current?.target ?? null) !== target) return;
     this._liveDirty = true;
     this._invalidate();
   }
@@ -619,8 +636,9 @@ export class WpReferenceWindow extends HTMLElement {
     const cur = this._deck.current;
     if (!cur) return null;
     if (cur.kind === "live") {
-      if (!this._liveSource && this.liveProvider) { this._liveSource = this.liveProvider(); this._lastLiveComposeT = performance.now(); }
-      return this._liveSource ? { w: this._liveSource.width, h: this._liveSource.height } : null;
+      this._dropLiveIfOther(cur);
+      if (!this._liveSource && this.liveProvider) this._takeLiveFrame(cur);
+      return this._liveSource ? this._liveSize : null;
     }
     const bm = this._bitmaps.get(cur.id);
     return bm ? { w: bm.width, h: bm.height } : null;   // 还在解 → 暂时没有尺寸
@@ -749,13 +767,23 @@ export class WpReferenceWindow extends HTMLElement {
       { id: "load",     label: l.load ?? "Load image",   icon: REF_ICON_IDS.folder },
       { id: "paste",    label: l.paste ?? "Paste",       icon: REF_ICON_IDS.paste },
       { id: "cloud",    label: l.cloud ?? "From cloud",  icon: REF_ICON_IDS.cloud, hidden: this.hasAttribute("no-cloud") },
-      { id: "live",     label: l.live ?? "Live mirror",  icon: REF_ICON_IDS.pip },
+      // 宿主出画面的卡：宿主没给 provider 就不列（写作 app 没有画布可镜像）；多台相机的宿主经 liveTargets 列多项
+      ...this._liveMenuItems(),
       { id: "onetoone", label: l.oneToOne ?? "1:1",      icon: REF_ICON_IDS.oneToOne },
       // 删除 = 二段确认（防误碰，user 0830）：第一下 arm（文案换 delConfirm 变红），第二下才删；没有可删的页时藏。
       { id: "delete",   label: this._delArmed ? (l.delConfirm ?? l.del ?? "Delete") : (l.del ?? "Delete"),
         icon: REF_ICON_IDS.trash, danger: this._delArmed, hidden: this._deck.size === 0, separatorBefore: true },
       // 「关闭」2026-09-11 从菜单提出成窗右上角 × 钮（user「不然找不到」）
     ];
+  }
+  private _liveMenuId(target: string | null): string { return target == null ? "live" : "live:" + target; }
+  private _liveMenuTargets(): RefLiveTarget[] {
+    if (!this.liveProvider) return [];
+    const list = this.liveTargets?.();
+    return list && list.length ? list : [{ target: null, label: this._labels.live ?? "Live mirror" }];
+  }
+  private _liveMenuItems(): RefMenuItem[] {
+    return this._liveMenuTargets().map((t) => ({ id: this._liveMenuId(t.target), label: t.label, icon: REF_ICON_IDS.pip }));
   }
   private _toggleMenu() {
     if (!this.menuPort) return;
@@ -776,7 +804,11 @@ export class WpReferenceWindow extends HTMLElement {
         if (id === "load") this._emit("requestload");
         else if (id === "paste") this._emit("requestpaste");
         else if (id === "cloud") this._emit("requestcloudload");
-        else if (id === "live") { this.showLive(); this._emitItems(); }
+        else if (id === "live" || id.startsWith("live:")) {
+          const t = this._liveMenuTargets().find((x) => this._liveMenuId(x.target) === id);
+          this.showLive(t?.target ?? null, t?.target == null ? "" : t.label);
+          this._emitItems();
+        }
         else if (id === "onetoone") this.oneToOne();
       },
     });
@@ -940,24 +972,49 @@ export class WpReferenceWindow extends HTMLElement {
   }
   private _stopLiveTimer() {
     this._liveSource = null;
+    this._liveSize = null;
+    this._liveOf = null;
     this._liveDirty = false;
     if (this._liveThrottle != null) { clearTimeout(this._liveThrottle); this._liveThrottle = null; }
   }
+  /** 手上的帧是另一张卡的（多台相机之间翻页）→ 扔掉，连节流的计时一起清：新卡的第一帧要立刻出，不许先画一下别人的画面。 */
+  private _dropLiveIfOther(cur: Card) {
+    if (this._liveOf === cur.id) return;
+    this._liveSource = null;
+    this._liveSize = null;
+    this._liveOf = cur.id;
+    this._lastLiveComposeT = undefined;
+    if (this._liveThrottle != null) { clearTimeout(this._liveThrottle); this._liveThrottle = null; }
+  }
+  /** 向宿主要一帧。要到了返回 true。 */
+  private _takeLiveFrame(cur: Card): boolean {
+    if (!this.liveProvider) return false;
+    const want: RefLiveWant = { width: this._canvas.width, height: this._canvas.height };
+    const got = this.liveProvider(want, cur.target ?? null);
+    if (!got) return false;
+    const wrapped = "source" in got;
+    const src = wrapped ? got.source : got;
+    this._liveSource = src;
+    this._liveSize = wrapped ? { w: got.width, h: got.height } : { w: src.width, h: src.height };
+    this._liveOf = cur.id;
+    this._lastLiveComposeT = performance.now();
+    return true;
+  }
   // live 合成：只在脏标真起时问 provider；节流内保留脏标等 timer 补帧（S9）。
   private _recomposeLive(): boolean {
-    if (!this.liveProvider) return true;
+    const cur = this._deck.current;
+    if (!this.liveProvider || !cur) return true;
+    this._dropLiveIfOther(cur);
+    const gap = Math.max(0, this.liveMinIntervalMs);
     const now = performance.now();
     const since = now - (this._lastLiveComposeT ?? -Infinity);
-    if (since < LIVE_THROTTLE_MS) {
+    if (since < gap) {
       if (this._liveThrottle == null) {
-        this._liveThrottle = setTimeout(() => { this._liveThrottle = null; this._invalidate(); }, LIVE_THROTTLE_MS + 20 - since);
+        this._liveThrottle = setTimeout(() => { this._liveThrottle = null; this._invalidate(); }, gap + 20 - since);
       }
       return false;
     }
-    const src = this.liveProvider();
-    if (!src) return true;   // 合成不可用（GL lost）→ 保留上帧（丢脏标，避免空转）
-    this._lastLiveComposeT = now;
-    this._liveSource = src;
+    this._takeLiveFrame(cur);   // 要不到（GL lost）→ 保留上帧；照样丢脏标，避免空转
     return true;
   }
   private _render() {
@@ -989,7 +1046,9 @@ export class WpReferenceWindow extends HTMLElement {
       -v.scale * s * dpr, v.scale * c * dpr,
       v.tx * dpr, v.ty * dpr,
     );
-    ctx.drawImage(source as CanvasImageSource, -source.width / 2, -source.height / 2);
+    // 宿主出的帧可能比这张卡「本来的大小」小（按提示出了小尺寸）→ 拉伸到本来的大小画；图片卡两者相等。
+    const size = cur?.kind === "live" && this._liveSize ? this._liveSize : { w: source.width, h: source.height };
+    ctx.drawImage(source as CanvasImageSource, -size.w / 2, -size.h / 2, size.w, size.h);
   }
 
   private _updateEmptyHint() {

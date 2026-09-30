@@ -161,7 +161,30 @@ export declare interface RefLabels {
     resizeAria?: string;
 }
 
+/** 宿主交回的一帧。直接给画面 = 画面的像素尺寸就是这张卡的尺寸（WeebPaint 的画布小窗）。
+ *  按提示出了小尺寸的宿主要另外说明这张卡「本来多大」（width/height），否则窗口一变大小，同样的缩放下图就跟着变大变小。 */
+export declare type RefLiveFrame = RefLiveSource | {
+    source: RefLiveSource;
+    width: number;
+    height: number;
+};
+
+/** 出帧函数。两个参数都可以不理（WeebPaint 现有的 provider 就不理）。返回 null = 这一帧出不了，保留上一帧。 */
+export declare type RefLiveProvider = (want: RefLiveWant, target: string | null) => RefLiveFrame | null;
+
 export declare type RefLiveSource = HTMLCanvasElement | OffscreenCanvas | ImageBitmap;
+
+/** ＋ 菜单里列哪些「宿主出画面的卡」。不给 = 只有一项，用 labels.live。 */
+export declare interface RefLiveTarget {
+    target: string | null;
+    label: string;
+}
+
+/** 要帧时告诉宿主：窗口现在有多少设备像素。只是提示——「铺满窗口看，这么多像素就够了」。 */
+export declare interface RefLiveWant {
+    width: number;
+    height: number;
+}
 
 export declare interface RefMenuHandle {
     close(): void;
@@ -205,7 +228,11 @@ export declare const WP_REFERENCE_WINDOW_TAG = "wp-reference-window";
 
 export declare class WpReferenceWindow extends HTMLElement {
     static get observedAttributes(): string[];
-    liveProvider: (() => RefLiveSource | null) | null;
+    liveProvider: RefLiveProvider | null;
+    /** 两帧之间至少隔多久（毫秒）。归宿主定：只有宿主知道自己出一帧多贵。缺省 300 = WeebPaint 现值。 */
+    liveMinIntervalMs: number;
+    /** ＋ 菜单里列哪些画面（多台相机的宿主用）。null = 只列一项。 */
+    liveTargets: (() => RefLiveTarget[]) | null;
     menuPort: RefMenuPort | null;
     /** 拖把地板（宿主注入 = ui/floating-window 运行时量的「顶栏下缘」；缺省 60 = 旧常数，裸挂可用）。
      *  拖 / 恢复 / 视口钳制三条路都吃它——出血区规则只准一个出处（2026-09-02 C2）。 */
@@ -226,6 +253,8 @@ export declare class WpReferenceWindow extends HTMLElement {
     private _decoding;
     private _labels;
     private _liveSource;
+    private _liveSize;
+    private _liveOf;
     private _liveDirty;
     private _lastLiveComposeT;
     private _liveThrottle;
@@ -259,7 +288,7 @@ export declare class WpReferenceWindow extends HTMLElement {
     /** 追加一张图并翻到它（导入漏斗尾）。 */
     addImage(bitmap: RefBitmapSource, blob: Blob | null): void;
     /** 画布镜像页：已有 → 翻过去；没有 → 追加并翻到（liveProvider 缺席 = no-op）。 */
-    showLive(): void;
+    showLive(target?: string | null, name?: string): void;
     /** 清空（换画/重置）。 */
     clearAll(): void;
     /** 宿主读走全部状态（desk 同步 + 保存收集）。当前页 vp 先回写。 */
@@ -281,7 +310,7 @@ export declare class WpReferenceWindow extends HTMLElement {
     oneToOne(): void;
     private _scaleBounds;
     private _containVp;
-    markLiveDirty(): void;
+    markLiveDirty(target?: string | null): void;
     private _emit;
     private _emitViewport;
     private _emitRect;
@@ -307,6 +336,9 @@ export declare class WpReferenceWindow extends HTMLElement {
     private _afterShow;
     private _bind;
     private _menuItems;
+    private _liveMenuId;
+    private _liveMenuTargets;
+    private _liveMenuItems;
     private _toggleMenu;
     private _pokeIdle;
     private _onDown;
@@ -320,6 +352,10 @@ export declare class WpReferenceWindow extends HTMLElement {
     private _resizeCanvasToBody;
     private _invalidate;
     private _stopLiveTimer;
+    /** 手上的帧是另一张卡的（多台相机之间翻页）→ 扔掉，连节流的计时一起清：新卡的第一帧要立刻出，不许先画一下别人的画面。 */
+    private _dropLiveIfOther;
+    /** 向宿主要一帧。要到了返回 true。 */
+    private _takeLiveFrame;
     private _recomposeLive;
     private _render;
     private _updateEmptyHint;
