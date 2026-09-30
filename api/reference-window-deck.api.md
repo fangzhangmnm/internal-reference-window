@@ -7,7 +7,6 @@
 // @public (undocumented)
 export interface Card {
     bytes: Blob | null;
-    face: Blob | null;
     readonly id: string;
     // (undocumented)
     kind: CardKind;
@@ -50,7 +49,6 @@ export interface CarriedItem {
     at: number;
     files: {
         src?: Blob;
-        face?: Blob;
     };
     item: Record<string, unknown>;
 }
@@ -95,6 +93,9 @@ export interface Deck {
 }
 
 // @public (undocumented)
+export const DECK_MANIFEST_NAME = "manifest.json";
+
+// @public (undocumented)
 export const DECK_MANIFEST_VERSION = 1;
 
 // @public (undocumented)
@@ -117,13 +118,26 @@ export type DeckChange =
     type: "reset";
 };
 
+// @public
+export function deckDir(app: string): string;
+
 // @public (undocumented)
 export interface DeckManifest {
     // (undocumented)
     index: number;
     // (undocumented)
     items: ManifestItem[];
-    version?: number;
+    // (undocumented)
+    version: number;
+}
+
+// @public
+export class DeckManifestTooNewError extends Error {
+    constructor(fileVersion: number, libVersion: number);
+    // (undocumented)
+    readonly fileVersion: number;
+    // (undocumented)
+    readonly libVersion: number;
 }
 
 // @public
@@ -156,25 +170,26 @@ export interface DecodedDeck {
     index: number;
 }
 
-// @public (undocumented)
-export function decodeDeck(manifest: unknown, o: DecodeOptions): DecodedDeck;
+// @public
+export function decodeDeck(o: DecodeOptions): Promise<DecodedDeck>;
+
+// @public
+export function decodeDeckFromJson(manifestJson: unknown, o: Pick<DecodeOptions, "knownKinds" | "getFile">): DecodedDeck;
 
 // @public (undocumented)
 export interface DecodeOptions {
-    getFile: (name: string) => Blob | null;
+    // (undocumented)
+    app: string;
+    getFile: (path: string) => Blob | null;
     knownKinds: readonly string[];
 }
 
-// @public (undocumented)
-export function encodeDeck(s: DeckSnapshot, o: EncodeOptions): {
-    manifest: DeckManifest;
-    files: Map<string, Blob>;
-};
+// @public
+export function encodeDeck(s: DeckSnapshot, o: EncodeOptions): Map<string, Blob>;
 
 // @public (undocumented)
 export interface EncodeOptions {
-    nameFile: (position: number, ext: string, role: "bytes" | "face") => string;
-    version?: number;
+    app: string;
 }
 
 // @public
@@ -184,7 +199,6 @@ export function extForMime(mime: string): string;
 export interface ManifestItem {
     // (undocumented)
     [extra: string]: unknown;
-    face?: string;
     // (undocumented)
     kind: string;
     // (undocumented)
@@ -201,6 +215,9 @@ export interface ManifestItem {
     // (undocumented)
     vp?: CardView | null;
 }
+
+// @public
+export function migrateDeckManifest(json: unknown): DeckManifest;
 
 // @public
 export function mimeForName(name: string): string;

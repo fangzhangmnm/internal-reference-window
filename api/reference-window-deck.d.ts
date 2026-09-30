@@ -9,8 +9,6 @@ export declare interface Card {
     mime: string;
     /** 宿主自己解析的不透明引用（"live" 卡：哪块画布 / 哪台相机）。库不解释。 */
     target: string | null;
-    /** 小封面（视频首帧 / 音乐封面），总是随文档保存：开文档那一刻位子上就有东西。 */
-    face: Blob | null;
     vp: CardView | null;
     play: CardPlay | null;
     /** 来历标记，平铺不套层。目前只有 "genai"。 */
@@ -40,10 +38,9 @@ export declare interface CarriedItem {
     at: number;
     /** 清单条目原文（JSON）。 */
     item: Record<string, unknown>;
-    /** 条目引用的字节：key = "src" | "face"。 */
+    /** 条目引用的字节（按清单里的 src）。 */
     files: {
         src?: Blob;
-        face?: Blob;
     };
 }
 
@@ -75,6 +72,8 @@ export declare interface Deck {
     onChange(fn: (what: DeckChange) => void): () => void;
 }
 
+export declare const DECK_MANIFEST_NAME = "manifest.json";
+
 export declare const DECK_MANIFEST_VERSION = 1;
 
 export declare type DeckChange = 
@@ -96,11 +95,20 @@ export declare type DeckChange =
     type: "reset";
 };
 
+/** 参考窗在容器里住的目录（不带尾斜杠）。 */
+export declare function deckDir(app: string): string;
+
 export declare interface DeckManifest {
-    /** 缺省 = WeebPaint format 2 的 refPanels（没有版本戳）。 */
-    version?: number;
+    version: number;
     index: number;
     items: ManifestItem[];
+}
+
+/** 清单版本比这个库新：不降级、不猜，报出去。 */
+export declare class DeckManifestTooNewError extends Error {
+    readonly fileVersion: number;
+    readonly libVersion: number;
+    constructor(fileVersion: number, libVersion: number);
 }
 
 /** restore 的入参：卡可以不带 id（载入时本来就没有）。 */
@@ -123,37 +131,36 @@ export declare interface DecodedDeck {
     carried: CarriedItem[];
 }
 
-export declare function decodeDeck(manifest: unknown, o: DecodeOptions): DecodedDeck;
+/** 从容器里读回牌组。目录里没有 manifest.json → 空牌组（不是错）。清单不是合法 JSON → 抛错（不静默当空）。 */
+export declare function decodeDeck(o: DecodeOptions): Promise<DecodedDeck>;
+
+/** 清单已经在手上（宿主从别处搬来的、或测试）时用这个。 */
+export declare function decodeDeckFromJson(manifestJson: unknown, o: Pick<DecodeOptions, "knownKinds" | "getFile">): DecodedDeck;
 
 export declare interface DecodeOptions {
+    app: string;
     /** 这个宿主画得出来的种类。其余的原样带着。 */
     knownKinds: readonly string[];
-    /** 按文件名取字节；没有就返回 null。 */
-    getFile: (name: string) => Blob | null;
+    /** 按文件名（含目录）取字节；没有就返回 null。 */
+    getFile: (path: string) => Blob | null;
 }
 
-export declare function encodeDeck(s: DeckSnapshot, o: EncodeOptions): {
-    manifest: DeckManifest;
-    files: Map<string, Blob>;
-};
+/** 把牌组编成容器里的一组文件：`.<app>/references/manifest.json` + 每张卡的字节。宿主原样存。 */
+export declare function encodeDeck(s: DeckSnapshot, o: EncodeOptions): Map<string, Blob>;
 
 export declare interface EncodeOptions {
-    /** 给第 position 张卡的字节（或小封面）起文件名。ext 不带点，由本库按 mime 定（不认识的 mime 给 "bin"）。 */
-    nameFile: (position: number, ext: string, role: "bytes" | "face") => string;
-    /** 给就写版本戳，不给就不写（WeebPaint format 2 没有版本戳）。 */
-    version?: number;
+    /** 宿主的名字，决定目录：`.<app>/references/`。 */
+    app: string;
 }
 
-/** mime → 扩展名（不带点）。参数里的 charset 之类先剥掉。不认识 → "bin"。 */
+/** mime → 扩展名（不带点）。不认识的图片给 "img"（WeebPaint 既有），其余不认识的给 "bin"。 */
 export declare function extForMime(mime: string): string;
 
 export declare interface ManifestItem {
     kind: string;
-    /** 字节在容器里的文件名。 */
+    /** 字节在容器里的文件名（含目录）。 */
     src?: string;
     vp?: CardView | null;
-    /** 小封面在容器里的文件名。 */
-    face?: string;
     name?: string;
     mime?: string;
     target?: string;
@@ -161,6 +168,9 @@ export declare interface ManifestItem {
     play?: CardPlay;
     [extra: string]: unknown;
 }
+
+/** 把任何版本的清单升到当前版。缺 version 视为 1；不是对象 → 空清单。 */
+export declare function migrateDeckManifest(json: unknown): DeckManifest;
 
 /** 文件名 → mime（按扩展名猜）。猜不出 → ""。 */
 export declare function mimeForName(name: string): string;

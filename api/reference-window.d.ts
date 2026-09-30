@@ -9,8 +9,6 @@ export declare interface Card {
     mime: string;
     /** 宿主自己解析的不透明引用（"live" 卡：哪块画布 / 哪台相机）。库不解释。 */
     target: string | null;
-    /** 小封面（视频首帧 / 音乐封面），总是随文档保存：开文档那一刻位子上就有东西。 */
-    face: Blob | null;
     vp: CardView | null;
     play: CardPlay | null;
     /** 来历标记，平铺不套层。目前只有 "genai"。 */
@@ -40,10 +38,9 @@ export declare interface CarriedItem {
     at: number;
     /** 清单条目原文（JSON）。 */
     item: Record<string, unknown>;
-    /** 条目引用的字节：key = "src" | "face"。 */
+    /** 条目引用的字节（按清单里的 src）。 */
     files: {
         src?: Blob;
-        face?: Blob;
     };
 }
 
@@ -167,12 +164,12 @@ export declare interface RefLabels {
     moveLater?: string;
     /** 计数钮（「3/12」）的提示：点它按名字跳转。 */
     jump?: string;
-    /** 没有名字的卡在跳转列表里叫什么，按种类给（如 { image: "图片", live: "画布镜像" }）。 */
+    /** 没有名字的卡在跳转列表里叫什么，按种类给（如 image → 图片、live → 画布镜像）。 */
     kindNames?: Record<string, string>;
 }
 
 /** 宿主交回的一帧。直接给画面 = 画面的像素尺寸就是这张卡的尺寸（WeebPaint 的画布小窗）。
- *  按提示出了小尺寸的宿主要另外说明这张卡「本来多大」（width/height），否则窗口一变大小，同样的缩放下图就跟着变大变小。 */
+ *  按提示出了小尺寸的宿主要另外说明这张卡「本来多大」（source 之外带 width / height），否则窗口一变大小，同样的缩放下图就跟着变大变小。 */
 export declare type RefLiveFrame = RefLiveSource | {
     source: RefLiveSource;
     width: number;

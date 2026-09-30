@@ -143,7 +143,7 @@ describe("牌组 · 载入恢复与快照", () => {
   });
   it("带着的卡跟着 restore 进、跟着 snapshot 出、clear 清掉", () => {
     const d = createDeck();
-    const carried = [{ at: 1, item: { kind: "hologram", depth: 3 }, files: { src: new Blob(["h"]) } }];
+    const carried = [{ at: 1, item: { kind: "hologram", depth: 3 }, files: { src: new Blob(["h"]) } }];   // 只有 src 一种引用
     d.restore({ cards: [img("a")], carried });
     carried[0].item.depth = 999;
     eq(d.snapshot().carried[0].item.depth, 3, "存的是拷贝");

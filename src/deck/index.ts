@@ -5,5 +5,8 @@ export { createDeck } from "./deck.ts";
 export type {
   Card, CardKind, CardPlay, CardView, CarriedItem, Deck, DeckChange, DeckRestore, DeckSnapshot, NewCard,
 } from "./deck.ts";
-export { decodeDeck, encodeDeck, extForMime, mimeForName, DECK_MANIFEST_VERSION } from "./manifest.ts";
+export {
+  decodeDeck, decodeDeckFromJson, encodeDeck, migrateDeckManifest, deckDir, extForMime, mimeForName,
+  DeckManifestTooNewError, DECK_MANIFEST_VERSION, DECK_MANIFEST_NAME,
+} from "./manifest.ts";
 export type { DecodedDeck, DecodeOptions, DeckManifest, EncodeOptions, ManifestItem } from "./manifest.ts";

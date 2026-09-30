@@ -26,8 +26,6 @@ export interface Card {
   mime: string;
   /** 宿主自己解析的不透明引用（"live" 卡：哪块画布 / 哪台相机）。库不解释。 */
   target: string | null;
-  /** 小封面（视频首帧 / 音乐封面），总是随文档保存：开文档那一刻位子上就有东西。 */
-  face: Blob | null;
   vp: CardView | null;
   play: CardPlay | null;
   /** 来历标记，平铺不套层。目前只有 "genai"。 */
@@ -43,8 +41,8 @@ export interface CarriedItem {
   at: number;
   /** 清单条目原文（JSON）。 */
   item: Record<string, unknown>;
-  /** 条目引用的字节：key = "src" | "face"。 */
-  files: { src?: Blob; face?: Blob };
+  /** 条目引用的字节（按清单里的 src）。 */
+  files: { src?: Blob };
 }
 
 export interface DeckSnapshot {
@@ -133,7 +131,6 @@ export function createDeck(): Deck {
     bytes: c.bytes ?? null,
     mime: c.mime ?? (c.bytes?.type || ""),
     target: c.target ?? null,
-    face: c.face ?? null,
     vp: cloneView(c.vp),
     play: clonePlay(c.play),
     origin: c.origin ?? null,

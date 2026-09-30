@@ -7,7 +7,6 @@
 // @public (undocumented)
 export interface Card {
     bytes: Blob | null;
-    face: Blob | null;
     readonly id: string;
     // (undocumented)
     kind: CardKind;
@@ -50,7 +49,6 @@ export interface CarriedItem {
     at: number;
     files: {
         src?: Blob;
-        face?: Blob;
     };
     item: Record<string, unknown>;
 }

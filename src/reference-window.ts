@@ -38,7 +38,7 @@ export type RefLiveSource = HTMLCanvasElement | OffscreenCanvas | ImageBitmap;
 /** 要帧时告诉宿主：窗口现在有多少设备像素。只是提示——「铺满窗口看，这么多像素就够了」。 */
 export interface RefLiveWant { width: number; height: number }
 /** 宿主交回的一帧。直接给画面 = 画面的像素尺寸就是这张卡的尺寸（WeebPaint 的画布小窗）。
- *  按提示出了小尺寸的宿主要另外说明这张卡「本来多大」（width/height），否则窗口一变大小，同样的缩放下图就跟着变大变小。 */
+ *  按提示出了小尺寸的宿主要另外说明这张卡「本来多大」（source 之外带 width / height），否则窗口一变大小，同样的缩放下图就跟着变大变小。 */
 export type RefLiveFrame = RefLiveSource | { source: RefLiveSource; width: number; height: number };
 /** 出帧函数。两个参数都可以不理（WeebPaint 现有的 provider 就不理）。返回 null = 这一帧出不了，保留上一帧。 */
 export type RefLiveProvider = (want: RefLiveWant, target: string | null) => RefLiveFrame | null;
@@ -52,7 +52,7 @@ export interface RefLabels {
   moveEarlier?: string; moveLater?: string;
   /** 计数钮（「3/12」）的提示：点它按名字跳转。 */
   jump?: string;
-  /** 没有名字的卡在跳转列表里叫什么，按种类给（如 { image: "图片", live: "画布镜像" }）。 */
+  /** 没有名字的卡在跳转列表里叫什么，按种类给（如 image → 图片、live → 画布镜像）。 */
   kindNames?: Record<string, string>;
 }
 // 多参考 item（组件运行时形；持久化映射在宿主 side-windows）。vp=null → 首次显示时 fit。
