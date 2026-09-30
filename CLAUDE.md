@@ -14,5 +14,7 @@
 - **牌组里每张卡的字节都随文档保存**，没有「只在这次有效」这种状态（user 2026-09-29 批去掉）。
 - **版本纪律同其他内部库**：开发期 `0.0.0`；版本号只在 user 过目真实导出面之后才写；收货脚本只认打过 tag 的已发版；bump minor 之前必须 user 批。
 - **只出货不送货**：本库的活到 commit 交付物为止；宿主收货、跑宿主测试、宿主发版是宿主 session 的活。
-- 测试 `npm test`；构建 + 户口 `npm run build`（`api/` 是生成物，勿手改）。
+- 测试分两档：`npm test`（node，零 DOM 的部分）+ `npm run probe`（构建后在无头 Chromium 里跑组件；playwright 借 WeebPaint 的 node_modules）。构建 + 户口 `npm run build`（`api/` 是生成物，勿手改）。
+- **开发期往宿主里装包只许用 `scripts/dev-install.sh`**：版本号一直是 0.0.0，手动覆盖 tgz 再 `npm install` 会命中旧缓存、装进去的还是旧包，测试全绿但测的是旧代码（2026-09-29 当天真踩过）。脚本会逐字节验货，并拒绝往宿主的 main 上装。
+- `test/fixtures/` 是已发出去的格式的冻结样本：只增不改，清单编解码必须永远读得了。
 - `journal/`、`journals/` 是人类区，AI 永不写。

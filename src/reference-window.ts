@@ -18,9 +18,17 @@
 //   放大 nearest（scale≥2 关 smoothing，像素画 friendly）；底=void+点阵（屏幕空间，对齐主画布）。
 //
 // 手势数学仍走 common/pointer-gesture（与主画布同一套三角）。
+//
+// ══ 2026-09-29 抽库（edited by Claude Fable 5.1）══
+//   本文件从 WeebPaint v0.14.20 src/frontend/reference-window.ts 原样抄入，随后把「那一叠卡」拆进了
+//   牌组模型（./deck/deck.ts，零 DOM）。本组件 = 牌组的默认视图：卡片 / 顺序 / 当前页 / 每卡视图状态归牌组，
+//   解好的位图、画布小窗的帧、手势和 gizmo 归这里。对外的方法和事件保持原样（setItems / addImage / …），
+//   它们现在是牌组之上的薄包装；宿主也可以直接用 .deck。上面注释里的 ai-docs 路径都指 WeebPaint 仓。
 
 import { pinchScaleRot, solveAnchorTranslation } from "./pointer-gesture.ts";
 import type { GestureViewport } from "./pointer-gesture.ts";
+import { createDeck } from "./deck/deck.ts";
+import type { Card, Deck, DeckChange } from "./deck/deck.ts";
 
 export type RefViewport = GestureViewport;
 export interface RefPanelRect { left: number; top: number; width: number; height: number; }
@@ -247,9 +255,13 @@ export class WpReferenceWindow extends HTMLElement {
   private _chipsEl: HTMLElement;
   private _chipCountEl: HTMLElement;
 
-  // ---- 多参考模型 ----
-  private _items: RefItem[] = [];
-  private _index = 0;
+  // ---- 多参考模型：卡片归牌组；这里只留画它们要用的东西 ----
+  private _deck: Deck = createDeck();
+  private _offDeck: (() => void) | null = null;
+  private _muted = false;                                   // 自己改牌组的那一下不听自己的回声（同步的重入守卫，不是时间窗）
+  private _shownId: string | null = null;                   // 现在画着的是哪张卡
+  private _bitmaps = new Map<string, RefBitmapSource>();    // 解好的位图，按卡 id
+  private _decoding = new Set<string>();                    // 正在解的卡
   private _labels: RefLabels = {};
 
   private _liveSource: RefLiveSource | null = null;
@@ -286,6 +298,19 @@ export class WpReferenceWindow extends HTMLElement {
     this._chipCountEl = root.querySelector(".chip-count")!;
     this._cctx = this._canvas.getContext("2d")!;
     this._bind(root);
+    this._offDeck = this._deck.onChange((what) => this._onDeckChange(what));
+  }
+
+  // ---- 牌组（宿主可以直接用；也可以换成自己的，比如和 VR 视图共用一副）----
+  get deck(): Deck { return this._deck; }
+  set deck(d: Deck) {
+    if (!d || d === this._deck) return;
+    this._offDeck?.();
+    this._closeAllBitmaps();
+    this._deck = d;
+    this._shownId = null;
+    this._offDeck = d.onChange((what) => this._onDeckChange(what));
+    this._syncFromDeck();
   }
 
   // ---- 属性面（入向；程序性 set 不发事件）----
@@ -300,7 +325,7 @@ export class WpReferenceWindow extends HTMLElement {
   }
   close() { this.open = false; }   // 程序性关（不发事件）
 
-  get live(): boolean { return this._items[this._index]?.kind === "live"; }
+  get live(): boolean { return this._deck.current?.kind === "live"; }
   isLive(): boolean { return this.live; }
 
   get viewport(): RefViewport { return { ...this._vp }; }
@@ -310,8 +335,7 @@ export class WpReferenceWindow extends HTMLElement {
     if (Number.isFinite(v.ty)) this._vp.ty = v.ty;
     if (Number.isFinite(v.scale)) this._vp.scale = v.scale;
     if (Number.isFinite(v.rot)) this._vp.rot = v.rot;
-    const cur = this._items[this._index];
-    if (cur) cur.vp = { ...this._vp };
+    this._saveCurrentVp();
     this._invalidate();
   }
 
@@ -353,36 +377,43 @@ export class WpReferenceWindow extends HTMLElement {
   // ---- 多参考内容 API（宿主灌注；程序性，不发事件）----
   /** 整表替换（load 恢复用）。旧 image bitmap 全部释放。 */
   setItems(items: RefItem[], index = 0) {
-    for (const it of this._items) if (it.kind === "image") it.bitmap.close?.();
-    this._items = items.slice();
-    this._index = Math.max(0, Math.min(items.length - 1, index));
+    this._closeAllBitmaps();
+    const ids = this._mute(() => this._deck.restore({
+      index,
+      cards: items.map((it) => it.kind === "image"
+        ? { kind: "image", bytes: it.blob, mime: it.blob?.type ?? "", vp: it.vp }
+        : { kind: "live", vp: it.vp }),
+    }));
+    items.forEach((it, i) => { if (it.kind === "image") this._bitmaps.set(ids[i]!, it.bitmap); });
+    this._shownId = this._deck.current?.id ?? null;
     this._loadCurrentVp({ fitIfMissing: true });
     this._afterItemsChanged();
   }
   /** 追加一张图并翻到它（导入漏斗尾）。 */
   addImage(bitmap: RefBitmapSource, blob: Blob | null) {
     this._saveCurrentVp();
-    this._items.push({ kind: "image", bitmap, blob, vp: null });
-    this._index = this._items.length - 1;
+    const id = this._mute(() => this._deck.add({ kind: "image", bytes: blob, mime: blob?.type ?? "" }));
+    this._bitmaps.set(id, bitmap);
+    this._shownId = id;
     this._loadCurrentVp({ fitIfMissing: true });
     this._afterItemsChanged();
   }
   /** 画布镜像页：已有 → 翻过去；没有 → 追加并翻到（liveProvider 缺席 = no-op）。 */
   showLive() {
     if (!this.liveProvider) return;
-    const i = this._items.findIndex((it) => it.kind === "live");
+    const i = this._deck.cards().findIndex((c) => c.kind === "live");
     this._saveCurrentVp();
-    if (i >= 0) this._index = i;
-    else { this._items.push({ kind: "live", vp: null }); this._index = this._items.length - 1; }
+    this._mute(() => { if (i >= 0) this._deck.select(i); else this._deck.add({ kind: "live" }); });
+    this._shownId = this._deck.current?.id ?? null;
     this._liveDirty = true;
     this._loadCurrentVp({ fitIfMissing: true });
     this._afterItemsChanged();
   }
   /** 清空（换画/重置）。 */
   clearAll() {
-    for (const it of this._items) if (it.kind === "image") it.bitmap.close?.();
-    this._items = [];
-    this._index = 0;
+    this._closeAllBitmaps();
+    this._mute(() => this._deck.clear());
+    this._shownId = null;
     this._stopLiveTimer();
     this._afterItemsChanged();
   }
@@ -390,13 +421,13 @@ export class WpReferenceWindow extends HTMLElement {
   getRefState(): { index: number; items: Array<{ kind: "image"; blob: Blob | null; vp: RefViewport | null } | { kind: "live"; vp: RefViewport | null }> } {
     this._saveCurrentVp();
     return {
-      index: this._index,
-      items: this._items.map((it) => it.kind === "image"
-        ? { kind: "image" as const, blob: it.blob, vp: it.vp ? { ...it.vp } : null }
-        : { kind: "live" as const, vp: it.vp ? { ...it.vp } : null }),
+      index: this._deck.index,
+      items: this._deck.cards().map((c) => c.kind === "live"
+        ? { kind: "live" as const, vp: c.vp ? { ...c.vp } : null }
+        : { kind: "image" as const, blob: c.bytes, vp: c.vp ? { ...c.vp } : null }),
     };
   }
-  get itemCount(): number { return this._items.length; }
+  get itemCount(): number { return this._deck.size; }
 
   fitToPanel() {
     const src = this._sourceSize();
@@ -464,21 +495,21 @@ export class WpReferenceWindow extends HTMLElement {
   }
   private _emitViewport() { this._emit("viewportchange", { ...this._vp }); }
   private _emitRect() { this._emit("rectchange", this.rect); }
-  private _emitItems() { this._emit("itemschange", { index: this._index, count: this._items.length }); }
+  private _emitItems() { this._emit("itemschange", { index: this._deck.index, count: this._deck.size }); }
 
   // ---- 内部：item 切换 ----
   private _saveCurrentVp() {
-    const cur = this._items[this._index];
-    if (cur) cur.vp = { ...this._vp };
+    const cur = this._deck.current;
+    if (cur) this._mute(() => this._deck.setView(cur.id, this._vp));
   }
   private _loadCurrentVp(opts: { fitIfMissing: boolean }) {
-    const cur = this._items[this._index];
+    const cur = this._deck.current;
     if (!cur) return;
     if (cur.vp) this._vp = { ...cur.vp };
     else if (opts.fitIfMissing) {
       // 画布可能还没 size（窗未开）：先置单位 vp，_afterShow/_render 前再 fit
       this._vp = { tx: 0, ty: 0, scale: 1, rot: 0 };
-      queueMicrotask(() => { if (!this._items[this._index]?.vp) this.fitToPanelSilent(); });
+      queueMicrotask(() => { if (!this._deck.current?.vp) this.fitToPanelSilent(); });
     }
   }
   /** fit 但不发事件（程序性初始适应；用户双击走 fitToPanel）。 */
@@ -494,24 +525,84 @@ export class WpReferenceWindow extends HTMLElement {
     this._invalidate();
   }
   private _page(delta: number) {
-    if (this._items.length < 2) return;
+    const n = this._deck.size;
+    if (n < 2) return;
     this._saveCurrentVp();
-    this._index = (this._index + delta + this._items.length) % this._items.length;
-    if (this._items[this._index].kind === "live") this._liveDirty = true;
+    this._mute(() => this._deck.select((this._deck.index + delta + n) % n));
+    this._shownId = this._deck.current?.id ?? null;
+    if (this.live) this._liveDirty = true;
     this._loadCurrentVp({ fitIfMissing: true });
     this._afterItemsChanged();
     this._emitItems();   // 用户翻页 → 宿主持久化 index
   }
   private _deleteCurrent() {
-    const cur = this._items[this._index];
+    const cur = this._deck.current;
     if (!cur) return;
-    if (cur.kind === "image") cur.bitmap.close?.();
-    this._items.splice(this._index, 1);
-    this._index = Math.max(0, Math.min(this._index, this._items.length - 1));
-    if (this._items[this._index]?.kind === "live") this._liveDirty = true;
+    this._bitmaps.get(cur.id)?.close?.();
+    this._bitmaps.delete(cur.id);
+    this._mute(() => this._deck.remove(cur.id));
+    this._shownId = this._deck.current?.id ?? null;
+    if (this.live) this._liveDirty = true;
     this._loadCurrentVp({ fitIfMissing: true });
     this._afterItemsChanged();
     this._emitItems();   // 用户删除 → 宿主持久化
+  }
+
+  // ---- 牌组 ⇄ 视图 ----
+  /** 自己改牌组的那一下不听自己的回声。别的监听者（宿主、VR 视图）照常收到。 */
+  private _mute<T>(fn: () => T): T {
+    const was = this._muted;
+    this._muted = true;
+    try { return fn(); } finally { this._muted = was; }
+  }
+  private _closeAllBitmaps() {
+    for (const bm of this._bitmaps.values()) bm.close?.();
+    this._bitmaps.clear();
+  }
+  /** 别人（宿主直接用 .deck、或共用这副牌的另一个视图）改了牌组。 */
+  private _onDeckChange(what: DeckChange) {
+    if (this._muted) return;
+    if (what.type === "invalidate") {
+      if (this._deck.current?.id === what.id) this.markLiveDirty();
+      return;
+    }
+    this._syncFromDeck();
+  }
+  /** 把视图对齐到牌组现状。幂等：牌组没变就什么都不做。 */
+  private _syncFromDeck() {
+    for (const [id, bm] of this._bitmaps) {
+      if (this._deck.indexOf(id) < 0) { bm.close?.(); this._bitmaps.delete(id); }
+    }
+    for (const c of this._deck.cards()) {
+      if (c.kind === "image" && c.bytes && !this._bitmaps.has(c.id) && !this._decoding.has(c.id)) this._decode(c);
+    }
+    const cur = this._deck.current;
+    if ((cur?.id ?? null) !== this._shownId) {
+      this._shownId = cur?.id ?? null;
+      if (cur?.kind === "live") this._liveDirty = true;
+      this._loadCurrentVp({ fitIfMissing: true });
+    } else if (cur?.vp) {
+      const a = cur.vp, b = this._vp;
+      if (a.tx !== b.tx || a.ty !== b.ty || a.scale !== b.scale || a.rot !== b.rot) this._vp = { ...a };
+    }
+    this._afterItemsChanged();
+  }
+  /** 只给了字节没给位图的图片卡（宿主直接往牌组里加的）：这里解。解不出来要说，不许装没事。 */
+  private _decode(c: Card) {
+    if (typeof createImageBitmap !== "function" || !c.bytes) return;
+    this._decoding.add(c.id);
+    createImageBitmap(c.bytes).then((bm) => {
+      this._decoding.delete(c.id);
+      if (this._deck.indexOf(c.id) < 0 || this._bitmaps.has(c.id)) { bm.close?.(); return; }
+      this._bitmaps.set(c.id, bm);
+      if (this._deck.current?.id === c.id) {
+        if (!this._deck.current.vp) this.fitToPanelSilent();
+        this._invalidate();
+      }
+    }, (e: unknown) => {
+      this._decoding.delete(c.id);
+      this._emit("notice", { level: "error", code: "decode-failed", id: c.id, name: c.name, message: String((e as { message?: unknown })?.message ?? e) });
+    });
   }
   private _afterItemsChanged() {
     if (!this.live) this._stopLiveTimer();
@@ -520,18 +611,19 @@ export class WpReferenceWindow extends HTMLElement {
     this._invalidate();
   }
   private _updateChips() {
-    const n = this._items.length;
+    const n = this._deck.size;
     this._chipsEl.classList.toggle("hidden", n < 2);
-    if (n >= 2) this._chipCountEl.textContent = `${this._index + 1}/${n}`;
+    if (n >= 2) this._chipCountEl.textContent = `${this._deck.index + 1}/${n}`;
   }
   private _sourceSize(): { w: number; h: number } | null {
-    const cur = this._items[this._index];
+    const cur = this._deck.current;
     if (!cur) return null;
     if (cur.kind === "live") {
       if (!this._liveSource && this.liveProvider) { this._liveSource = this.liveProvider(); this._lastLiveComposeT = performance.now(); }
       return this._liveSource ? { w: this._liveSource.width, h: this._liveSource.height } : null;
     }
-    return { w: cur.bitmap.width, h: cur.bitmap.height };
+    const bm = this._bitmaps.get(cur.id);
+    return bm ? { w: bm.width, h: bm.height } : null;   // 还在解 → 暂时没有尺寸
   }
 
   // ---- 内部：显示/绑定 ----
@@ -546,7 +638,7 @@ export class WpReferenceWindow extends HTMLElement {
     this._updateChips();
     if (this.live) this._liveDirty = true;   // 重新打开 = 默认重画一次
     // 窗关着时灌入的 item 没法 fit（canvas 零尺寸）→ 开窗补一次静默适应
-    if (this._items[this._index] && !this._items[this._index].vp) this.fitToPanelSilent();
+    if (this._deck.current && !this._deck.current.vp) this.fitToPanelSilent();
     this._pokeIdle();
     this._invalidate();
   }
@@ -661,7 +753,7 @@ export class WpReferenceWindow extends HTMLElement {
       { id: "onetoone", label: l.oneToOne ?? "1:1",      icon: REF_ICON_IDS.oneToOne },
       // 删除 = 二段确认（防误碰，user 0830）：第一下 arm（文案换 delConfirm 变红），第二下才删；没有可删的页时藏。
       { id: "delete",   label: this._delArmed ? (l.delConfirm ?? l.del ?? "Delete") : (l.del ?? "Delete"),
-        icon: REF_ICON_IDS.trash, danger: this._delArmed, hidden: this._items.length === 0, separatorBefore: true },
+        icon: REF_ICON_IDS.trash, danger: this._delArmed, hidden: this._deck.size === 0, separatorBefore: true },
       // 「关闭」2026-09-11 从菜单提出成窗右上角 × 钮（user「不然找不到」）
     ];
   }
@@ -869,7 +961,7 @@ export class WpReferenceWindow extends HTMLElement {
     return true;
   }
   private _render() {
-    const cur = this._items[this._index];
+    const cur = this._deck.current;
     if (cur?.kind === "live" && this._liveDirty) {
       if (this._recomposeLive()) this._liveDirty = false;
     }
@@ -882,7 +974,7 @@ export class WpReferenceWindow extends HTMLElement {
     if (cur?.kind === "live") {
       if (!this._liveSource) this._recomposeLive();   // 首帧（节流窗自己排 timer 补）
       source = this._liveSource;
-    } else if (cur) source = cur.bitmap;
+    } else if (cur) source = this._bitmaps.get(cur.id) ?? null;
     if (!source) return;
     // 底不 canvas 自画：clearRect 透底，:host 的 void+点阵 CSS 从图外与图的透明部分透出（对齐 editor）。
     // 放大 nearest（0830 像素画 friendly）：scale≥2 关平滑走硬像素；缩小保持平滑防摩尔纹。
@@ -901,7 +993,7 @@ export class WpReferenceWindow extends HTMLElement {
   }
 
   private _updateEmptyHint() {
-    this._emptyEl.classList.toggle("hidden", this._items.length > 0);
+    this._emptyEl.classList.toggle("hidden", this._deck.size > 0);
   }
 
   /** 视口护栏：尺寸不超视口预算、位置不落屏外（拖已自钳；这里兜 restore/open/浏览器窗口 resize/

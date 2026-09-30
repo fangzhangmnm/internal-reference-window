@@ -5,6 +5,138 @@
 ```ts
 
 // @public (undocumented)
+export interface Card {
+    bytes: Blob | null;
+    face: Blob | null;
+    readonly id: string;
+    // (undocumented)
+    kind: CardKind;
+    // (undocumented)
+    mime: string;
+    name: string;
+    origin: string | null;
+    // (undocumented)
+    play: CardPlay | null;
+    target: string | null;
+    // (undocumented)
+    vp: CardView | null;
+}
+
+// @public
+export type CardKind = string;
+
+// @public
+export interface CardPlay {
+    // (undocumented)
+    loop: boolean;
+    // (undocumented)
+    t: number;
+}
+
+// @public
+export interface CardView {
+    // (undocumented)
+    rot: number;
+    // (undocumented)
+    scale: number;
+    // (undocumented)
+    tx: number;
+    // (undocumented)
+    ty: number;
+}
+
+// @public
+export interface CarriedItem {
+    at: number;
+    files: {
+        src?: Blob;
+        face?: Blob;
+    };
+    item: Record<string, unknown>;
+}
+
+// @public (undocumented)
+export interface Deck {
+    add(card: NewCard, opts?: {
+        select?: boolean;
+    }): string;
+    // (undocumented)
+    cards(): readonly Card[];
+    clear(): void;
+    // (undocumented)
+    readonly current: Card | null;
+    // (undocumented)
+    get(id: string): Card | null;
+    // (undocumented)
+    readonly index: number;
+    // (undocumented)
+    indexOf(id: string): number;
+    // (undocumented)
+    invalidate(id: string): void;
+    move(id: string, toIndex: number): void;
+    // (undocumented)
+    onChange(fn: (what: DeckChange) => void): () => void;
+    // (undocumented)
+    remove(id: string): void;
+    restore(s: DeckRestore): string[];
+    // (undocumented)
+    select(index: number): void;
+    // (undocumented)
+    setPlay(id: string, play: CardPlay): void;
+    // (undocumented)
+    setView(id: string, vp: CardView): void;
+    // (undocumented)
+    readonly size: number;
+    // (undocumented)
+    snapshot(): DeckSnapshot;
+}
+
+// @public (undocumented)
+export type DeckChange =
+/** 增 / 删 / 挪：牌组内容变了，宿主应标脏。 */
+    {
+    type: "cards";
+}
+/** 翻页 / 平移缩放 / 滚动 / 播放位置：只是看法变了。标不标脏归宿主。 */
+| {
+    type: "view";
+}
+/** "live" 卡：宿主报「内容变了」，何时真去要一帧由视图定。 */
+| {
+    type: "invalidate";
+    id: string;
+}
+/** restore / clear 之后整副牌换了：视图该整个重画。不是用户改动，宿主不应据此标脏。 */
+| {
+    type: "reset";
+};
+
+// @public
+export interface DeckRestore {
+    // (undocumented)
+    cards: readonly NewCard[];
+    // (undocumented)
+    carried?: readonly CarriedItem[];
+    // (undocumented)
+    index?: number;
+}
+
+// @public (undocumented)
+export interface DeckSnapshot {
+    // (undocumented)
+    cards: Card[];
+    // (undocumented)
+    carried: CarriedItem[];
+    // (undocumented)
+    index: number;
+}
+
+// @public
+export type NewCard = {
+    kind: CardKind;
+} & Partial<Omit<Card, "id" | "kind">>;
+
+// @public (undocumented)
 export const REF_ICON_IDS: {
     readonly folder: "folder";
     readonly paste: "paste";
@@ -147,6 +279,9 @@ export class WpReferenceWindow extends HTMLElement {
     clearAll(): void;
     // (undocumented)
     close(): void;
+    // (undocumented)
+    get deck(): Deck;
+    set deck(d: Deck);
     // (undocumented)
     fitToPanel(): void;
     fitToPanelSilent(): void;

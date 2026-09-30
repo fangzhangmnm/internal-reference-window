@@ -1,0 +1,14 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>reference-window probe</title>
+<style>
+  :root { --bg: #202124; --ink: #e8eaed; --line: #3c4043; }
+  body { margin: 0; height: 100vh; background: #888; }
+  #editor { position: fixed; left: 8px; bottom: 8px; width: 200px; height: 60px; }
+</style>
+<body>
+<!-- 宿主的图标 sprite：只放两个，其余故意缺（缺的应该出虚线占位，不炸） -->
+<svg style="display:none"><symbol id="new" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/></symbol><symbol id="x" viewBox="0 0 24 24"><circle cx="12" cy="12" r="2"/></symbol></svg>
+<textarea id="editor">宿主的编辑区</textarea>
+<script type="module" src="./page.js"></script>
+</body>

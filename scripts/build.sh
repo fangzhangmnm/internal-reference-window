@@ -11,5 +11,7 @@ js_total=$(find dist -name '*.js' -exec du -cb {} + | tail -1 | cut -f1)
 echo "[体重] dist js 合计 $((js_total / 1024)) KB；最胖3件："
 find dist -name '*.js' -exec du -b {} + | sort -rn | head -3 | awk '{printf "  %5.1f KB  %s\n", $1/1024, $2}'
 # 户口刷新（api-extractor --local：公共面变了就重写 api/*.api.md，git diff 即审核面）
+# 两个入口各出一份户口：包根（默认视图）+ ./deck（牌组模型，零 DOM）
 npx api-extractor run --local -c api-extractor.json
-echo "[户口] api/reference-window.api.md + api/reference-window.d.ts 已刷新"
+npx api-extractor run --local -c api-extractor.deck.json
+echo "[户口] api/reference-window{,-deck}.api.md + .d.ts 已刷新"

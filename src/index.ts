@@ -19,3 +19,6 @@ export type {
   RefMenuHandle,
   RefMenuPort,
 } from "./reference-window.ts";
+
+// 牌组的类型在包根也给一份（用 el.deck 的宿主不必再多写一行 import）；值（createDeck / 编解码）走 "./deck" 入口。
+export type { Card, CardKind, CardPlay, CardView, CarriedItem, Deck, DeckChange, DeckRestore, DeckSnapshot, NewCard } from "./deck/index.ts";
