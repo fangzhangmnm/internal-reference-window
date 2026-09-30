@@ -48,6 +48,12 @@ export interface RefLabels {
   load?: string; paste?: string; cloud?: string; live?: string; oneToOne?: string;
   del?: string; delConfirm?: string; closeWin?: string;
   prev?: string; next?: string; menu?: string; move?: string; resize?: string; resizeAria?: string;
+  /** ＋ 菜单：把当前这张卡往前 / 往后挪一位。 */
+  moveEarlier?: string; moveLater?: string;
+  /** 计数钮（「3/12」）的提示：点它按名字跳转。 */
+  jump?: string;
+  /** 没有名字的卡在跳转列表里叫什么，按种类给（如 { image: "图片", live: "画布镜像" }）。 */
+  kindNames?: Record<string, string>;
 }
 // 多参考 item（组件运行时形；持久化映射在宿主 side-windows）。vp=null → 首次显示时 fit。
 export type RefItem =
@@ -95,6 +101,8 @@ interface PointerPos { x: number; y: number; }
 export const REF_ICON_IDS = {
   folder: "folder", paste: "paste", cloud: "cloud", pip: "picture-in-picture", oneToOne: "one-to-one",
   trash: "trash-can", x: "x", plus: "new", prev: "chevron-left", next: "chevron-right",
+  // 2026-09-29：挪动顺序 / 跳转列表。都是库里现成的图标（带杆的左右箭头、勾），没有新画。
+  earlier: "back", later: "forward", current: "check",
 } as const;
 function iconMarkup(id: string): string {
   const sym = (typeof document !== "undefined") ? document.querySelector(`svg symbol[id="${id}"]`) : null;
@@ -214,7 +222,7 @@ canvas:active { cursor: grabbing; }
 .chips.hidden { display: none; }
 .chip { background: transparent; border: none; color: inherit; padding: 2px; cursor: pointer; display: flex; }
 .chip svg { width: 14px; height: 14px; }
-.chip-count { font-size: 11px; min-width: 26px; text-align: center; color: var(--ink-soft, #9aa0a6); }
+.chip-count { font-size: 11px; min-width: 26px; text-align: center; color: var(--ink-soft, #9aa0a6); font-family: inherit; justify-content: center; }
 /* gizmo 显隐两档（user 0830「鼠标移走时 gizmos 都隐藏」；「12.12 iPad 看起来还行不干扰」→ 触屏档维持）：
    .away = 能悬停的设备指针离窗 → 全隐（进窗即现）；.idle = 闲置 2.5s 淡至 .35（触屏无悬停只有这档，
    全隐会让 chips 变盲操作）。菜单弹层不在其列。 */
@@ -239,7 +247,7 @@ canvas:active { cursor: grabbing; }
 <div class="grip" part="grip"></div>
 <div class="chips hidden">
   <button class="chip" data-page="-1" type="button">${iconMarkup(REF_ICON_IDS.prev)}</button>
-  <span class="chip-count">1/1</span>
+  <button class="chip chip-count" data-jump type="button">1/1</button>
   <button class="chip" data-page="1" type="button">${iconMarkup(REF_ICON_IDS.next)}</button>
 </div>
 `; }
@@ -267,6 +275,7 @@ export class WpReferenceWindow extends HTMLElement {
   private _delArmed = false;                       // 删除二段确认 armed（菜单关即复位）
   private _chipsEl: HTMLElement;
   private _chipCountEl: HTMLElement;
+  private _menuAnchor: HTMLElement | null = null;   // 现在开着的菜单挂在谁身上（＋ 或计数钮）
 
   // ---- 多参考模型：卡片归牌组；这里只留画它们要用的东西 ----
   private _deck: Deck = createDeck();
@@ -386,6 +395,7 @@ export class WpReferenceWindow extends HTMLElement {
     setTitle(".move", l.move);
     setTitle('[data-page="-1"]', l.prev);
     setTitle('[data-page="1"]', l.next);
+    setTitle("[data-jump]", l.jump);
     setTitle(".grip", l.resize, l.resizeAria);
   }
 
@@ -405,9 +415,9 @@ export class WpReferenceWindow extends HTMLElement {
     this._afterItemsChanged();
   }
   /** 追加一张图并翻到它（导入漏斗尾）。 */
-  addImage(bitmap: RefBitmapSource, blob: Blob | null) {
+  addImage(bitmap: RefBitmapSource, blob: Blob | null, opts?: { name?: string; origin?: string | null }) {
     this._saveCurrentVp();
-    const id = this._mute(() => this._deck.add({ kind: "image", bytes: blob, mime: blob?.type ?? "" }));
+    const id = this._mute(() => this._deck.add({ kind: "image", bytes: blob, mime: blob?.type ?? "", name: opts?.name ?? "", origin: opts?.origin ?? null }));
     this._bitmaps.set(id, bitmap);
     this._shownId = id;
     this._loadCurrentVp({ fitIfMissing: true });
@@ -551,6 +561,31 @@ export class WpReferenceWindow extends HTMLElement {
     this._loadCurrentVp({ fitIfMissing: true });
     this._afterItemsChanged();
     this._emitItems();   // 用户翻页 → 宿主持久化 index
+  }
+  /** 用户把当前这张卡挪一位。还在看这张卡，只是它排的位置变了。 */
+  private _moveCurrent(delta: number) {
+    const cur = this._deck.current;
+    const to = this._deck.index + delta;
+    if (!cur || to < 0 || to >= this._deck.size) return;
+    this._saveCurrentVp();
+    this._mute(() => this._deck.move(cur.id, to));
+    this._afterItemsChanged();
+    this._emitItems();   // 用户改了顺序 → 宿主持久化
+  }
+  /** 用户从跳转列表里点了第 i 张。 */
+  private _jumpTo(i: number) {
+    if (i === this._deck.index || i < 0 || i >= this._deck.size) return;
+    this._saveCurrentVp();
+    this._mute(() => this._deck.select(i));
+    this._shownId = this._deck.current?.id ?? null;
+    if (this.live) this._liveDirty = true;
+    this._loadCurrentVp({ fitIfMissing: true });
+    this._afterItemsChanged();
+    this._emitItems();
+  }
+  private _cardLabel(c: Card, i: number): string {
+    const name = c.name || this._labels.kindNames?.[c.kind] || c.kind;
+    return `${i + 1}  ${name}`;
   }
   private _deleteCurrent() {
     const cur = this._deck.current;
@@ -708,11 +743,24 @@ export class WpReferenceWindow extends HTMLElement {
       });
     }
 
-    // 翻页 chips
+    // 翻页 chips；中间的计数是跳转列表的入口
     this._chipsEl.addEventListener("click", (e) => {
-      const b = (e.target as Element).closest("[data-page]") as HTMLElement | null;
+      const t = e.target as Element;
+      if (t.closest("[data-jump]")) { this._toggleJump(); return; }
+      const b = t.closest("[data-page]") as HTMLElement | null;
       if (b) this._page(parseInt(b.dataset.page!, 10));
     });
+
+    // 瞥一眼不能有代价（user 2026-09-29 同意）：用鼠标 / 手指点窗里的任何东西，都不许把键盘焦点从宿主那里拿走
+    //   ——写作 app 里点一下参考窗就把软键盘收了，是在冷启动时添堵。拦的是「按下」的默认行为（挪焦点、起选区），
+    //   click 照常触发；用 Tab 键走到这些按钮上不受影响。将来要让用户选中文字的卡，在内容上标 data-takes-focus 放行。
+    const keepHostFocus = (e: Event) => {
+      const t = e.target as Element | null;
+      if (t?.closest?.("[data-takes-focus]")) return;
+      e.preventDefault();
+    };
+    root.addEventListener("pointerdown", keepHostFocus);
+    root.addEventListener("mousedown", keepHostFocus);
 
     // v134 touch resize 手柄（CSS resize:both 只支持鼠标）
     const grip = root.querySelector(".grip") as HTMLElement;
@@ -770,6 +818,12 @@ export class WpReferenceWindow extends HTMLElement {
       // 宿主出画面的卡：宿主没给 provider 就不列（写作 app 没有画布可镜像）；多台相机的宿主经 liveTargets 列多项
       ...this._liveMenuItems(),
       { id: "onetoone", label: l.oneToOne ?? "1:1",      icon: REF_ICON_IDS.oneToOne },
+      // 挪动顺序的逃生口（user 2026-09-29「reorder也需要有逃生口」）：点完菜单不关，可以连点；到头的那一项藏起来
+      { id: "earlier",  label: l.moveEarlier ?? "Move earlier", icon: REF_ICON_IDS.earlier,
+        hidden: this._deck.size < 2 || this._deck.index === 0, separatorBefore: true },
+      { id: "later",    label: l.moveLater ?? "Move later",     icon: REF_ICON_IDS.later,
+        hidden: this._deck.size < 2 || this._deck.index === this._deck.size - 1,
+        separatorBefore: this._deck.size >= 2 && this._deck.index === 0 },
       // 删除 = 二段确认（防误碰，user 0830）：第一下 arm（文案换 delConfirm 变红），第二下才删；没有可删的页时藏。
       { id: "delete",   label: this._delArmed ? (l.delConfirm ?? l.del ?? "Delete") : (l.del ?? "Delete"),
         icon: REF_ICON_IDS.trash, danger: this._delArmed, hidden: this._deck.size === 0, separatorBefore: true },
@@ -785,8 +839,31 @@ export class WpReferenceWindow extends HTMLElement {
   private _liveMenuItems(): RefMenuItem[] {
     return this._liveMenuTargets().map((t) => ({ id: this._liveMenuId(t.target), label: t.label, icon: REF_ICON_IDS.pip }));
   }
+  /** 跳转列表：点计数钮弹出，一张卡一行，点哪个跳哪个。复用同一个菜单端口，不加新 gizmo。 */
+  private _toggleJump() {
+    if (!this.menuPort || this._deck.size < 2) return;
+    this._swapMenuAnchor(this._chipCountEl);
+    this._menu = this.menuPort({
+      anchor: this._chipCountEl,
+      items: () => this._deck.cards().map((c, i) => ({
+        id: "jump:" + i, label: this._cardLabel(c, i),
+        ...(i === this._deck.index ? { icon: REF_ICON_IDS.current } : {}),
+      })),
+      align: "left", band: "menu",
+      swallowOutsideTap: true,
+      ariaLabel: this._labels.jump,
+      onClose: () => { this._menu = null; this._menuAnchor = null; },
+      onPick: (id) => { this._jumpTo(parseInt(id.slice(5), 10)); },
+    });
+    this._menuAnchor = this._menu ? this._chipCountEl : null;
+  }
+  /** 两个菜单共用一个端口：要开的和正开着的不是同一个锚 → 先把开着的收掉（同一个锚则交给端口自己的 toggle 语义）。 */
+  private _swapMenuAnchor(next: HTMLElement) {
+    if (this._menu && this._menuAnchor !== next) this._menu.close();
+  }
   private _toggleMenu() {
     if (!this.menuPort) return;
+    this._swapMenuAnchor(this._plusEl);
     this._delArmed = false;
     this._menu = this.menuPort({
       anchor: this._plusEl,
@@ -794,12 +871,17 @@ export class WpReferenceWindow extends HTMLElement {
       align: "right", band: "menu",
       swallowOutsideTap: true,   // 菜单开着时点别处 = 只关菜单，那一击不落到画布/主画布（原 shadow 内行为保留并推广）
       ariaLabel: this._labels.menu,
-      onClose: () => { this._menu = null; this._delArmed = false; },
+      onClose: () => { this._menu = null; this._menuAnchor = null; this._delArmed = false; },
       onPick: (id) => {
         if (id === "delete") {
           if (!this._delArmed) { this._delArmed = true; return "keep"; }
           this._deleteCurrent();
           return;
+        }
+        if (id === "earlier" || id === "later") {
+          this._delArmed = false;
+          this._moveCurrent(id === "earlier" ? -1 : 1);
+          return "keep";
         }
         if (id === "load") this._emit("requestload");
         else if (id === "paste") this._emit("requestpaste");
@@ -812,6 +894,7 @@ export class WpReferenceWindow extends HTMLElement {
         else if (id === "onetoone") this.oneToOne();
       },
     });
+    this._menuAnchor = this._menu ? this._plusEl : null;
   }
   private _pokeIdle() {
     this.classList.remove("idle");

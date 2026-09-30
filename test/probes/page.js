@@ -216,13 +216,97 @@ async function liveGeneral() {
   small.remove();
 }
 
+async function reorderAndJump() {
+  const el = mount(), log = listen(el), menu = fakeMenu(el);
+  el.labels = { kindNames: { image: "图片" } };
+  for (const [n, c] of [["红", "#ff0000"], ["", "#00ff00"], ["蓝", "#0000ff"]]) el.deck.add({ kind: "image", name: n, bytes: await png(c) });
+  await until(() => center(el) === BLUE);
+  const order = () => el.deck.cards().map((c) => c.name || "·").join("");
+  const ids = () => menu.items().map((i) => i.id);
+
+  // 在看最后一张：只能往前挪
+  add("reorder:在最后一张 → 菜单里只有「往前挪」", ids().includes("earlier") && !ids().includes("later"), ids().join(","));
+  log.length = 0;
+  const keep = menu.pick("earlier"); await frame();
+  add("reorder:往前挪一位 → 顺序变、还在看这张、计数 2/3、菜单不关、发 itemschange",
+    order() === "红蓝·" && center(el) === BLUE && count(el) === "2/3" && keep === "keep" && names(log) === "itemschange",
+    `order=${order()} ${center(el)} ${count(el)} keep=${keep} events=${names(log)}`);
+  add("reorder:挪到中间 → 两个方向都有", ids().includes("earlier") && ids().includes("later"), ids().join(","));
+  menu.pick("earlier"); await frame();
+  add("reorder:连点第二下 → 挪到最前，「往前挪」消失", order() === "蓝红·" && !ids().includes("earlier") && ids().includes("later"), `${order()} ${ids().join(",")}`);
+  menu.pick("earlier"); await frame();
+  add("reorder:已经在最前还点 → 什么都不变", order() === "蓝红·", order());
+
+  // 跳转列表
+  el.shadowRoot.querySelector("[data-jump]").click();
+  const list = menu.opts.items();
+  add("jump:点计数 → 一张卡一行，没名字的用种类名，当前那张打勾",
+    list.map((i) => i.label).join("|") === "1  蓝|2  红|3  图片" && list[0].icon === "check" && !list[1].icon && !list[2].icon,
+    list.map((i) => `${i.label}${i.icon ? "✓" : ""}`).join("|"));
+  log.length = 0;
+  menu.pick("jump:2"); await frame();
+  add("jump:点第三行 → 跳过去，发 itemschange", center(el) === GREEN && count(el) === "3/3" && names(log) === "itemschange", `${center(el)} ${count(el)} events=${names(log)}`);
+
+  // 一张卡时两样都不出现
+  const one = mount(), m1 = fakeMenu(one);
+  one.deck.add({ kind: "image", bytes: await png("#ff0000") });
+  await until(() => center(one) === RED);
+  add("reorder:只有一张卡 → 菜单里没有挪动项", !m1.items().some((i) => i.id === "earlier" || i.id === "later"), m1.items().map((i) => i.id).join(","));
+
+  // 来历标记
+  const blob = await png("#0000ff");
+  one.addImage(await createImageBitmap(blob), blob, { name: "稻草人 3", origin: "genai" });
+  add("origin:addImage 可以带名字和来历，落在卡上", one.deck.current.origin === "genai" && one.deck.current.name === "稻草人 3", JSON.stringify({ o: one.deck.current.origin, n: one.deck.current.name }));
+  el.remove(); one.remove();
+}
+
 try {
   await customElements.whenDefined("wp-reference-window");
   await deckDriven();
   await sharedDeck();
   await liveViaDeck();
   await liveGeneral();
+  await reorderAndJump();
 } catch (e) {
   add("探针自己炸了", false, String(e?.stack ?? e));
 }
+
+// ---- 焦点探针用的两个钩子（由 run.mjs 用真实鼠标驱动；合成的 .click() 不会挪焦点，测不出来）----
+window.__focusSetup = async () => {
+  const el = mount(); window.__focusMenu = fakeMenu(el);
+  el.deck.add({ kind: "image", name: "红", bytes: await png("#ff0000") });
+  el.deck.add({ kind: "image", name: "绿", bytes: await png("#00ff00") });
+  await until(() => center(el) === GREEN);
+  el.classList.remove("away", "idle");
+  const ed = document.getElementById("editor");
+  ed.focus(); ed.setSelectionRange(2, 4);
+  window.__focusEl = el;
+  const rectOf = (sel) => { const r = el.shadowRoot.querySelector(sel).getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; };
+  // 三角形把手：点靠角的那一侧（另一半被裁掉了，点中心会落空）
+  const host = el.getBoundingClientRect();
+  return {
+    "移动把手": { x: host.left + 5, y: host.top + 5 },
+    "缩放把手": { x: host.right - 5, y: host.bottom - 5 },
+    "＋": rectOf(".plus"),
+    "上一张": rectOf('[data-page="-1"]'),
+    "下一张": rectOf('[data-page="1"]'),
+    "计数": rectOf(".chip-count"),
+    "卡片内容": { x: host.left + host.width / 2, y: host.top + host.height / 2 },
+    "×": rectOf(".close"),
+  };
+};
+window.__focusState = () => {
+  const ed = document.getElementById("editor"), a = document.activeElement;
+  const el = window.__focusEl, r = el.getBoundingClientRect();
+  return {
+    active: a === ed ? "editor" : (a?.tagName ?? "null").toLowerCase(), sel: `${ed.selectionStart}-${ed.selectionEnd}`,
+    open: el.open, index: el.deck.index, opens: window.__focusMenu.opens, anchor: window.__focusMenu.opts?.anchor?.className ?? "",
+  };
+};
+window.__focusReset = () => {
+  const ed = document.getElementById("editor");
+  window.__focusEl.open = true; window.__focusEl.classList.remove("away", "idle");
+  window.__focusMenu.opts?.onClose?.(); window.__focusMenu.opts = null;
+  ed.focus(); ed.setSelectionRange(2, 4);
+};
 window.__PROBE__ = results;

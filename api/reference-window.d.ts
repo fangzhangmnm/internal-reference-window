@@ -128,6 +128,9 @@ export declare const REF_ICON_IDS: {
     readonly plus: "new";
     readonly prev: "chevron-left";
     readonly next: "chevron-right";
+    readonly earlier: "back";
+    readonly later: "forward";
+    readonly current: "check";
 };
 
 export declare type RefBitmapSource = (ImageBitmap | HTMLImageElement | HTMLCanvasElement | OffscreenCanvas) & {
@@ -159,6 +162,13 @@ export declare interface RefLabels {
     move?: string;
     resize?: string;
     resizeAria?: string;
+    /** ＋ 菜单：把当前这张卡往前 / 往后挪一位。 */
+    moveEarlier?: string;
+    moveLater?: string;
+    /** 计数钮（「3/12」）的提示：点它按名字跳转。 */
+    jump?: string;
+    /** 没有名字的卡在跳转列表里叫什么，按种类给（如 { image: "图片", live: "画布镜像" }）。 */
+    kindNames?: Record<string, string>;
 }
 
 /** 宿主交回的一帧。直接给画面 = 画面的像素尺寸就是这张卡的尺寸（WeebPaint 的画布小窗）。
@@ -245,6 +255,7 @@ export declare class WpReferenceWindow extends HTMLElement {
     private _delArmed;
     private _chipsEl;
     private _chipCountEl;
+    private _menuAnchor;
     private _deck;
     private _offDeck;
     private _muted;
@@ -286,7 +297,10 @@ export declare class WpReferenceWindow extends HTMLElement {
     /** 整表替换（load 恢复用）。旧 image bitmap 全部释放。 */
     setItems(items: RefItem[], index?: number): void;
     /** 追加一张图并翻到它（导入漏斗尾）。 */
-    addImage(bitmap: RefBitmapSource, blob: Blob | null): void;
+    addImage(bitmap: RefBitmapSource, blob: Blob | null, opts?: {
+        name?: string;
+        origin?: string | null;
+    }): void;
     /** 画布镜像页：已有 → 翻过去；没有 → 追加并翻到（liveProvider 缺席 = no-op）。 */
     showLive(target?: string | null, name?: string): void;
     /** 清空（换画/重置）。 */
@@ -320,6 +334,11 @@ export declare class WpReferenceWindow extends HTMLElement {
     /** fit 但不发事件（程序性初始适应；用户双击走 fitToPanel）。 */
     fitToPanelSilent(): void;
     private _page;
+    /** 用户把当前这张卡挪一位。还在看这张卡，只是它排的位置变了。 */
+    private _moveCurrent;
+    /** 用户从跳转列表里点了第 i 张。 */
+    private _jumpTo;
+    private _cardLabel;
     private _deleteCurrent;
     /** 自己改牌组的那一下不听自己的回声。别的监听者（宿主、VR 视图）照常收到。 */
     private _mute;
@@ -339,6 +358,10 @@ export declare class WpReferenceWindow extends HTMLElement {
     private _liveMenuId;
     private _liveMenuTargets;
     private _liveMenuItems;
+    /** 跳转列表：点计数钮弹出，一张卡一行，点哪个跳哪个。复用同一个菜单端口，不加新 gizmo。 */
+    private _toggleJump;
+    /** 两个菜单共用一个端口：要开的和正开着的不是同一个锚 → 先把开着的收掉（同一个锚则交给端口自己的 toggle 语义）。 */
+    private _swapMenuAnchor;
     private _toggleMenu;
     private _pokeIdle;
     private _onDown;

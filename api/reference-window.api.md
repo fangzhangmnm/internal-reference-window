@@ -148,6 +148,9 @@ export const REF_ICON_IDS: {
     readonly plus: "new";
     readonly prev: "chevron-left";
     readonly next: "chevron-right";
+    readonly earlier: "back";
+    readonly later: "forward";
+    readonly current: "check";
 };
 
 // @public (undocumented)
@@ -176,6 +179,8 @@ export interface RefLabels {
     del?: string;
     // (undocumented)
     delConfirm?: string;
+    jump?: string;
+    kindNames?: Record<string, string>;
     // (undocumented)
     live?: string;
     // (undocumented)
@@ -184,6 +189,9 @@ export interface RefLabels {
     menu?: string;
     // (undocumented)
     move?: string;
+    moveEarlier?: string;
+    // (undocumented)
+    moveLater?: string;
     // (undocumented)
     next?: string;
     // (undocumented)
@@ -299,7 +307,10 @@ export const WP_REFERENCE_WINDOW_TAG = "wp-reference-window";
 // @public (undocumented)
 export class WpReferenceWindow extends HTMLElement {
     constructor();
-    addImage(bitmap: RefBitmapSource, blob: Blob | null): void;
+    addImage(bitmap: RefBitmapSource, blob: Blob | null, opts?: {
+        name?: string;
+        origin?: string | null;
+    }): void;
     // (undocumented)
     attributeChangedCallback(name: string, oldV: string | null, newV: string | null): void;
     clearAll(): void;

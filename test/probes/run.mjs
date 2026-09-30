@@ -37,6 +37,33 @@ try {
   await page.goto(`http://127.0.0.1:${port}/test/probes/page.html`);
   await page.waitForFunction(() => window.__PROBE__, null, { timeout: 60_000 });
   results = await page.evaluate(() => window.__PROBE__);
+
+  // 焦点探针：瞥一眼不能有代价。用真实鼠标逐个点 gizmo，宿主编辑区的焦点和选区必须原样留着。
+  const spots = await page.evaluate(() => window.__focusSetup());
+  for (const [name, at] of Object.entries(spots)) {
+    await page.evaluate(() => window.__focusReset());
+    const before = await page.evaluate(() => window.__focusState());
+    await page.mouse.move(at.x, at.y);
+    await page.mouse.down(); await page.mouse.up();
+    const st = await page.evaluate(() => window.__focusState());
+    results.push({ name: `focus:点「${name}」之后焦点和选区还在宿主的编辑区`, ok: st.active === "editor" && st.sel === "2-4", info: `焦点在 ${st.active}，选区 ${st.sel}` });
+    // 不抢焦点不能变成点不动：该有的效果必须照样发生
+    const effect = {
+      "＋": () => [st.opens === before.opens + 1 && st.anchor.includes("plus"), `菜单开了 ${st.opens - before.opens} 次，挂在 ${st.anchor}`],
+      "计数": () => [st.opens === before.opens + 1 && st.anchor.includes("chip-count"), `列表开了 ${st.opens - before.opens} 次，挂在 ${st.anchor}`],
+      "上一张": () => [st.index !== before.index, `第 ${before.index + 1} 张 → 第 ${st.index + 1} 张`],
+      "下一张": () => [st.index !== before.index, `第 ${before.index + 1} 张 → 第 ${st.index + 1} 张`],
+      "×": () => [before.open === true && st.open === false, `窗 ${before.open ? "开" : "关"} → ${st.open ? "开" : "关"}`],
+    }[name];
+    if (effect) { const [ok, info] = effect(); results.push({ name: `click:真实鼠标点「${name}」照样有效`, ok, info }); }
+  }
+  // 拖动把手：真实鼠标按住拖 60 像素，窗跟着走
+  await page.evaluate(() => window.__focusReset());
+  const r0 = await page.evaluate(() => { const r = window.__focusEl.getBoundingClientRect(); return { x: r.left, y: r.top }; });
+  await page.mouse.move(r0.x + 5, r0.y + 5); await page.mouse.down();
+  await page.mouse.move(r0.x + 65, r0.y + 45, { steps: 5 }); await page.mouse.up();
+  const r1 = await page.evaluate(() => { const r = window.__focusEl.getBoundingClientRect(); return { x: r.left, y: r.top, st: window.__focusState() }; });
+  results.push({ name: "click:真实鼠标拖移动把手 → 窗跟着走，焦点不动", ok: Math.round(r1.x - r0.x) === 60 && Math.round(r1.y - r0.y) === 40 && r1.st.active === "editor", info: `Δ=${Math.round(r1.x - r0.x)},${Math.round(r1.y - r0.y)} 焦点在 ${r1.st.active}` });
 } catch (e) {
   results.push({ name: "探针没跑完", ok: false, info: String(e?.message ?? e) });
 } finally {
