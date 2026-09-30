@@ -98,7 +98,7 @@ const MIN_EDGE = 96;                          // 丝薄：最小边（user 0830�
 const TEXT_SCALE_MIN = 0.5, TEXT_SCALE_MAX = 4;   // 文字卡字号倍率界限（基准 13px）
 
 interface PanelDragState { id: number; sx: number; sy: number; ol: number; ot: number; moved: boolean; }
-interface ResizeDragState { id: number; sx: number; sy: number; w0: number; h0: number; }
+interface ResizeDragState { id: number; sx: number; sy: number; w0: number; h0: number; l0: number; t0: number }
 interface GestureStartState { midX: number; midY: number; dist: number; angle: number; vp: RefViewport; }
 interface PointerPos { x: number; y: number; }
 
@@ -293,6 +293,9 @@ export class WpReferenceWindow extends HTMLElement {
   /** 拖把地板（宿主注入 = ui/floating-window 运行时量的「顶栏下缘」；缺省 60 = 旧常数，裸挂可用）。
    *  拖 / 恢复 / 视口钳制三条路都吃它——出血区规则只准一个出处（2026-09-02 C2）。 */
   topFloor = DRAG_TOP_FLOOR;
+  /** 底边地板（宿主注入 = 屏底被占掉的高度：app 内软键盘、iOS 键盘那一块……；缺省 0）。拖 / resize / 视口钳制都吃它——
+   *  否则右下角的 resize 把手会被键盘盖住（user 2026-09-30「参考窗或者任何浮窗需要保证 move 和 resize 能点到」）。改了之后宿主调 reclamp()。 */
+  bottomFloor = 0;
 
   private _canvas: HTMLCanvasElement;
   private _cctx: CanvasRenderingContext2D;
@@ -827,7 +830,7 @@ export class WpReferenceWindow extends HTMLElement {
       d.moved = true;
       const w = this.offsetWidth, h = this.offsetHeight;
       const left = clamp(d.ol + (e.clientX - d.sx), 0, window.innerWidth - w);
-      const top = clamp(d.ot + (e.clientY - d.sy), this.topFloor, window.innerHeight - h);
+      const top = clamp(d.ot + (e.clientY - d.sy), this.topFloor, Math.max(this.topFloor, window.innerHeight - this.bottomFloor - h));
       this.style.left = left + "px";
       this.style.top = top + "px";
       this._emitRect();
@@ -883,12 +886,13 @@ export class WpReferenceWindow extends HTMLElement {
       e.stopPropagation();
       try { grip.setPointerCapture(e.pointerId); } catch {}
       const r = this.getBoundingClientRect();
-      this._resizeDrag = { id: e.pointerId, sx: e.clientX, sy: e.clientY, w0: r.width, h0: r.height };
+      this._resizeDrag = { id: e.pointerId, sx: e.clientX, sy: e.clientY, w0: r.width, h0: r.height, l0: r.left, t0: r.top };
     });
     grip.addEventListener("pointermove", (e: PointerEvent) => {
       if (!this._resizeDrag || e.pointerId !== this._resizeDrag.id) return;
-      const w = Math.max(MIN_EDGE, Math.min(window.innerWidth - 40, this._resizeDrag.w0 + (e.clientX - this._resizeDrag.sx)));
-      const h = Math.max(MIN_EDGE, Math.min(window.innerHeight - 80, this._resizeDrag.h0 + (e.clientY - this._resizeDrag.sy)));
+      // 右 / 下边不出视口（下边还要留出 bottomFloor：把手别缩进键盘底下）
+      const w = Math.max(MIN_EDGE, Math.min(window.innerWidth - 8 - this._resizeDrag.l0, this._resizeDrag.w0 + (e.clientX - this._resizeDrag.sx)));
+      const h = Math.max(MIN_EDGE, Math.min(window.innerHeight - this.bottomFloor - 8 - this._resizeDrag.t0, this._resizeDrag.h0 + (e.clientY - this._resizeDrag.sy)));
       this.style.width = w + "px";
       this.style.height = h + "px";
       this._emitRect();
@@ -1308,18 +1312,20 @@ export class WpReferenceWindow extends HTMLElement {
 
   /** 视口护栏：尺寸不超视口预算、位置不落屏外（拖已自钳；这里兜 restore/open/浏览器窗口 resize/
    *  native CSS resize 四条路）。返回是否有修正。 */
+  /** 地板变了（键盘露 / 收、顶栏高度变）之后宿主调：整窗钳回可见区，动了就发 rectchange。 */
+  reclamp(): void { if (this._clampIntoViewport()) this._emitRect(); }
   private _clampIntoViewport(): boolean {
     const vw = window.innerWidth, vh = window.innerHeight;
     if (!(vw > 0) || !(vh > 0)) return false;
     let w = this.offsetWidth, h = this.offsetHeight;
     if (!(w > 0) || !(h > 0)) return false;   // display:none（未 open）：开窗时 _afterShow 再钳
     let changed = false;
-    const maxW = Math.max(MIN_EDGE, vw - 8), maxH = Math.max(MIN_EDGE, vh - this.topFloor - 8);
+    const maxW = Math.max(MIN_EDGE, vw - 8), maxH = Math.max(MIN_EDGE, vh - this.topFloor - this.bottomFloor - 8);
     if (w > maxW) { w = maxW; this.style.width = w + "px"; changed = true; }
     if (h > maxH) { h = maxH; this.style.height = h + "px"; changed = true; }
     const r = this.getBoundingClientRect();
     const left = clamp(r.left, 0, vw - w);
-    const top = clamp(r.top, this.topFloor, vh - h);
+    const top = clamp(r.top, this.topFloor, Math.max(this.topFloor, vh - this.bottomFloor - h));
     if (Math.abs(left - r.left) > 0.5) { this.style.left = left + "px"; changed = true; }
     if (Math.abs(top - r.top) > 0.5) { this.style.top = top + "px"; changed = true; }
     return changed;

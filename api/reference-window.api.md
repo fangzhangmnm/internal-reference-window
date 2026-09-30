@@ -321,6 +321,7 @@ export class WpReferenceWindow extends HTMLElement {
     }): void;
     // (undocumented)
     attributeChangedCallback(name: string, oldV: string | null, newV: string | null): void;
+    bottomFloor: number;
     clearAll(): void;
     // (undocumented)
     close(): void;
@@ -366,6 +367,7 @@ export class WpReferenceWindow extends HTMLElement {
     // (undocumented)
     get open(): boolean;
     set open(v: boolean);
+    reclamp(): void;
     // (undocumented)
     get rect(): RefPanelRect;
     set rect(o: Partial<RefPanelRect> | null | undefined);

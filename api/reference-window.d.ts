@@ -255,6 +255,9 @@ export declare class WpReferenceWindow extends HTMLElement {
     /** 拖把地板（宿主注入 = ui/floating-window 运行时量的「顶栏下缘」；缺省 60 = 旧常数，裸挂可用）。
      *  拖 / 恢复 / 视口钳制三条路都吃它——出血区规则只准一个出处（2026-09-02 C2）。 */
     topFloor: number;
+    /** 底边地板（宿主注入 = 屏底被占掉的高度：app 内软键盘、iOS 键盘那一块……；缺省 0）。拖 / resize / 视口钳制都吃它——
+     *  否则右下角的 resize 把手会被键盘盖住（user 2026-09-30「参考窗或者任何浮窗需要保证 move 和 resize 能点到」）。改了之后宿主调 reclamp()。 */
+    bottomFloor: number;
     private _canvas;
     private _cctx;
     private _textEl;
@@ -414,6 +417,8 @@ export declare class WpReferenceWindow extends HTMLElement {
     private _updateEmptyHint;
     /** 视口护栏：尺寸不超视口预算、位置不落屏外（拖已自钳；这里兜 restore/open/浏览器窗口 resize/
      *  native CSS resize 四条路）。返回是否有修正。 */
+    /** 地板变了（键盘露 / 收、顶栏高度变）之后宿主调：整窗钳回可见区，动了就发 rectchange。 */
+    reclamp(): void;
     private _clampIntoViewport;
 }
 
