@@ -388,7 +388,7 @@ window.__focusSetup = async () => {
     "上一张": rectOf('[data-page="-1"]'),
     "下一张": rectOf('[data-page="1"]'),
     "计数": rectOf(".chip-count"),
-    "卡片内容": { x: host.left + host.width / 2, y: host.top + host.height / 2 },
+    // 「卡片内容」0.3.1 起不在此列：点窗身 = 窗拿焦点（粘贴归焦点，user「看 focus」）；见 run.mjs 的 hasFocus 探针
     "×": rectOf(".close"),
   };
 };

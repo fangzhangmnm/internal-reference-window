@@ -324,6 +324,7 @@ export class WpReferenceWindow extends HTMLElement {
     clearAll(): void;
     // (undocumented)
     close(): void;
+    connectedCallback(): void;
     // (undocumented)
     get deck(): Deck;
     set deck(d: Deck);
@@ -341,6 +342,7 @@ export class WpReferenceWindow extends HTMLElement {
             vp: RefViewport | null;
         }>;
     };
+    get hasFocus(): boolean;
     // (undocumented)
     isLive(): boolean;
     // (undocumented)

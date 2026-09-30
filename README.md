@@ -1,6 +1,6 @@
 # @internal/reference-window
 
-> created 2026-09-29 by Claude Fable 5.1 · as-of 0.3.0（已发 0.1.0 / 0.2.0 / 0.3.0，2026-09-29）· 源 = WeebPaint v0.14.20 `src/frontend/reference-window.ts`
+> created 2026-09-29 by Claude Fable 5.1 · as-of 0.3.1（已发 0.1.0 / 0.2.0 / 0.3.0 / 0.3.1，2026-09-30）· 源 = WeebPaint v0.14.20 `src/frontend/reference-window.ts`
 
 PWA 家族的参考窗：一个浮在工作区上的小窗，放参考图、画布小窗这类「一直在场」的东西。
 

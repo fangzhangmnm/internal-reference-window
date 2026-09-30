@@ -4,7 +4,7 @@
 //   - 入向 = 属性/property 下灌（**程序性 set 不发事件**，同原生 <input>.value 语义）；
 //     出向 = CustomEvent（只有**用户交互**发：pan/pinch/wheel/拖窗/resize/菜单/翻页/删除/吸色）。
 //     宿主对回声事件做值比较（RO 在程序性改动后也会 fire）——见 side-windows.ts 适配层。
-//   - 主题 = CSS 变量穿透（--bg/--ink/--line/--radius/--shadow/--z-window/--void/--void-dot，
+//   - 主题 = CSS 变量穿透（--bg/--ink/--line/--radius/--shadow/--z-window/--void，
 //     全带 fallback，裸挂也能看）；文案 = slot（empty，宿主 light DOM 走自家 i18n）+ labels property。
 //   - 图标烤进 shadow（<use href="#id"> 不穿 shadow 边界），源=家族 sprite（20260708 SVG Icons），
 //     对账 id：folder / cloud / picture-in-picture / x / new(＋) / paste / trash-can（库原几何烤入）；
@@ -138,18 +138,15 @@ function buildTemplate(): string { return `<style>
   overflow: hidden;
   border: 1px solid var(--line, #3c4043);
   border-radius: var(--radius, 10px);
+  outline: none;
   box-shadow: var(--shadow, 0 8px 24px rgba(0, 0, 0, 0.4));
   z-index: var(--z-window, 100);
   -webkit-tap-highlight-color: transparent;
   font-size: 13px;
-  /* 底=editor 画布 void 同款（user 0830）：--void/--void-dot 穿透 shadow；24px 网格 / r1.25px 软边。
-     attachment:fixed = 屏幕空间（拖窗点不动，浮在同一张桌布上）；y 相位补偿对齐 GL 网格原点
-     （画布左下 vs 视口左上），宿主 board resize 时写 --void-grid-phase-y（= 视口高 mod 24px）。 */
+  /* 底 = 纯色 --void（0.3.1，user 2026-09-30「背景也不需要加点，就纯色」）。想要和自己画布同款点阵的宿主
+     （WeebPaint 0830「底=editor 画布 void 同款」）在宿主 CSS 里对 wp-reference-window 写 background-image——
+     外部样式盖得过 :host。 */
   background-color: var(--void, #e6e2d6);
-  background-image: radial-gradient(circle, var(--void-dot, #cec8b8) 1.25px, transparent 2px);
-  background-size: 24px 24px;
-  background-attachment: fixed;
-  background-position: 0 var(--void-grid-phase-y, 0px);
 }
 :host(:not([open])) { display: none; }
 canvas {
@@ -262,10 +259,11 @@ canvas:active { cursor: grabbing; }
 }
 .empty.hidden { display: none; }
 .empty ::slotted(*), .empty p { margin: 0; }
+:host(:focus) { box-shadow: var(--shadow, 0 8px 24px rgba(0, 0, 0, 0.4)), inset 0 0 0 2px color-mix(in srgb, var(--ink, #e8eaed) 45%, transparent); }   /* 有焦点 = 粘贴落这里：一圈细描边 */
 </style>
 <canvas></canvas>
 <div class="text" part="text" data-takes-focus></div>
-<div class="empty"><slot name="empty"><p>＋ 导入参考图</p></slot></div>
+<div class="empty"><slot name="empty"><p>＋ 导入参考</p></slot></div>
 <div class="move" part="move"></div>
 <button class="plus" part="plus" type="button" aria-haspopup="true">${iconMarkup(REF_ICON_IDS.plus)}</button>
 <button class="close" part="close" type="button">${iconMarkup(REF_ICON_IDS.x)}</button>
@@ -278,7 +276,9 @@ canvas:active { cursor: grabbing; }
 `; }
 
 export class WpReferenceWindow extends HTMLElement {
-  static get observedAttributes() { return ["open", "no-cloud"]; }   // no-cloud：宿主云功能关 → 藏云盘选图项
+  static get observedAttributes() { return ["open", "no-cloud"]; }
+  /** 0.3.1：窗身可拿焦点（粘贴归焦点）。属性只能在这里加（自定义元素构造器里加属性 = createElement 直接炸）；宿主可自定 tabindex。 */
+  connectedCallback() { if (!this.hasAttribute("tabindex")) this.tabIndex = 0; }   // no-cloud：宿主云功能关 → 藏云盘选图项
 
   // 宿主端口：live 合成 provider（一次性 set；组件在当前页 kind=live 时消费）。null = 这个宿主没有画面可出。
   liveProvider: RefLiveProvider | null = null;
@@ -374,6 +374,8 @@ export class WpReferenceWindow extends HTMLElement {
   }
 
   // ---- 属性面（入向；程序性 set 不发事件）----
+  /** 键盘焦点在参考窗上（含窗内文字卡）= 宿主的 Ctrl+V 应落到这里（0.3.1，user「看 focus」）。 */
+  get hasFocus(): boolean { return document.activeElement === this; }
   get open(): boolean { return this.hasAttribute("open"); }
   set open(v: boolean) { this.toggleAttribute("open", !!v); if (!v) this._menu?.close(); }   // 关窗 = 菜单一并收（菜单挂 body，不随窗隐）
   attributeChangedCallback(name: string, oldV: string | null, newV: string | null) {
@@ -864,9 +866,11 @@ export class WpReferenceWindow extends HTMLElement {
     // 瞥一眼不能有代价（user 2026-09-29 同意）：用鼠标 / 手指点窗里的任何东西，都不许把键盘焦点从宿主那里拿走
     //   ——写作 app 里点一下参考窗就把软键盘收了，是在冷启动时添堵。拦的是「按下」的默认行为（挪焦点、起选区），
     //   click 照常触发；用 Tab 键走到这些按钮上不受影响。将来要让用户选中文字的卡，在内容上标 data-takes-focus 放行。
+    //   **0.3.1（user 2026-09-30「这个看 focus 吧」）**：粘贴归焦点——窗身（画面 / 空态 / 拖把 / 手柄）按下就拿焦点
+    //   （宿主元素 tabindex=0；宿主的 paste 监听看 hasFocus 分流），只有四个小钮（翻页 / ＋ / ×）仍不夺焦点：瞥一眼翻页零代价。
     const keepHostFocus = (e: Event) => {
       const t = e.target as Element | null;
-      if (t?.closest?.("[data-takes-focus]")) return;
+      if (!t?.closest?.("button")) return;   // 窗身 → 让浏览器把焦点落到 host（tabindex=0）
       e.preventDefault();
     };
     root.addEventListener("pointerdown", keepHostFocus);
@@ -1057,6 +1061,7 @@ export class WpReferenceWindow extends HTMLElement {
   }
 
   private _onDown(e: PointerEvent) {
+    if (!this.hasAttribute("pick")) this.focus({ preventScroll: true });   // 0.3.1 粘贴归焦点：点窗身 = 窗拿焦点（手势 preventDefault 会吞掉默认的落焦，所以显式来）；吸管态不动焦点
     try { this._canvas.setPointerCapture?.(e.pointerId); } catch {}
     this._pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     // 吸色：pick 属性（吸管工具态）→ 立即吸；touch 长按 → 恒吸色（0830：吸色钮/设置门退役，

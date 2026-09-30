@@ -57,6 +57,15 @@ try {
     }[name];
     if (effect) { const [ok, info] = effect(); results.push({ name: `click:真实鼠标点「${name}」照样有效`, ok, info }); }
   }
+  // 0.3.1 粘贴归焦点（user 2026-09-30「这个看 focus 吧」）：点窗身（画面）→ 焦点到窗（hasFocus）；点回宿主编辑区 → 焦点回去
+  await page.evaluate(() => window.__focusReset());
+  const body = await page.evaluate(() => { const r = window.__focusEl.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+  await page.mouse.move(body.x, body.y); await page.mouse.down(); await page.mouse.up();
+  const fb = await page.evaluate(() => ({ st: window.__focusState(), has: window.__focusEl.hasFocus, active: document.activeElement === window.__focusEl }));
+  results.push({ name: "focus:真实鼠标点窗身 → 焦点落到参考窗（hasFocus=true，activeElement=窗）", ok: fb.has && fb.active && fb.st.active !== "editor", info: `hasFocus=${fb.has} active=${fb.st.active}` });
+  await page.evaluate(() => { document.getElementById("editor").focus(); });
+  const fb2 = await page.evaluate(() => ({ has: window.__focusEl.hasFocus, st: window.__focusState() }));
+  results.push({ name: "focus:焦点回宿主编辑区 → hasFocus=false", ok: !fb2.has && fb2.st.active === "editor", info: `hasFocus=${fb2.has} active=${fb2.st.active}` });
   // 拖动把手：真实鼠标按住拖 60 像素，窗跟着走
   await page.evaluate(() => window.__focusReset());
   const r0 = await page.evaluate(() => { const r = window.__focusEl.getBoundingClientRect(); return { x: r.left, y: r.top }; });

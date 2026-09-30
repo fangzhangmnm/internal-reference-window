@@ -242,6 +242,8 @@ export declare const WP_REFERENCE_WINDOW_TAG = "wp-reference-window";
 
 export declare class WpReferenceWindow extends HTMLElement {
     static get observedAttributes(): string[];
+    /** 0.3.1：窗身可拿焦点（粘贴归焦点）。属性只能在这里加（自定义元素构造器里加属性 = createElement 直接炸）；宿主可自定 tabindex。 */
+    connectedCallback(): void;
     liveProvider: RefLiveProvider | null;
     /** 两帧之间至少隔多久（毫秒）。归宿主定：只有宿主知道自己出一帧多贵。缺省 300 = WeebPaint 现值。 */
     liveMinIntervalMs: number;
@@ -297,6 +299,8 @@ export declare class WpReferenceWindow extends HTMLElement {
     constructor();
     get deck(): Deck;
     set deck(d: Deck);
+    /** 键盘焦点在参考窗上（含窗内文字卡）= 宿主的 Ctrl+V 应落到这里（0.3.1，user「看 focus」）。 */
+    get hasFocus(): boolean;
     get open(): boolean;
     set open(v: boolean);
     attributeChangedCallback(name: string, oldV: string | null, newV: string | null): void;
