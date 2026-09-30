@@ -11,6 +11,7 @@ if [ "$ver" = "0.0.0" ]; then
 fi
 bash scripts/build.sh
 node test/run.mjs
-pnpm pack
+# pnpm 这台机器走 corepack（家族惯例；直接敲 pnpm 找不到命令）
+if command -v pnpm >/dev/null 2>&1; then pnpm pack; else corepack pnpm pack; fi
 tgz="internal-reference-window-$ver.tgz"
 echo "[release] $tgz 就绪：$(du -h "$tgz" | cut -f1)（下一步：tgz 拷进消费方仓 vendor-pkgs/ 并 commit）"
