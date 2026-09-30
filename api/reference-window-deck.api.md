@@ -84,6 +84,7 @@ export interface Deck {
     select(index: number): void;
     // (undocumented)
     setPlay(id: string, play: CardPlay): void;
+    setTarget(id: string, target: string | null): void;
     // (undocumented)
     setView(id: string, vp: CardView): void;
     // (undocumented)

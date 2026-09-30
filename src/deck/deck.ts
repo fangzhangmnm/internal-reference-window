@@ -87,6 +87,8 @@ export interface Deck {
   select(index: number): void;
   setView(id: string, vp: CardView): void;
   setPlay(id: string, play: CardPlay): void;
+  /** 改链接卡指向谁（宿主的页改了名）。内容变了 → 通知 "cards"；视图该重取内容。 */
+  setTarget(id: string, target: string | null): void;
   invalidate(id: string): void;
   onChange(fn: (what: DeckChange) => void): () => void;
 }
@@ -219,6 +221,14 @@ export function createDeck(): Deck {
       if (c.play && c.play.t === p.t && c.play.loop === p.loop) return;
       c.play = p;
       emit({ type: "view" });
+    },
+
+    setTarget(id, target) {
+      const c = deck.get(id);
+      if (!c || c.target === target) return;
+      c.target = target;
+      emit({ type: "cards" });
+      emit({ type: "invalidate", id });
     },
 
     invalidate(id) {

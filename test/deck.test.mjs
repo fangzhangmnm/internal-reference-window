@@ -103,6 +103,13 @@ describe("牌组 · 视图状态", () => {
     d.setPlay(id, { t: 12.5, loop: true });
     eq(d.get(id).play.t, 12.5); eq(d.get(id).play.loop, true);
   });
+  it("setTarget 改指向 → 通知 cards + invalidate；同值不通知", () => {
+    const d = createDeck();
+    const id = d.add({ kind: "text", target: "page:a" });
+    const log = watch(d);
+    d.setTarget(id, "page:b"); d.setTarget(id, "page:b");
+    eq(d.get(id).target, "page:b"); eq(log.join(","), "cards,invalidate");
+  });
   it("invalidate 只对存在的卡通知", () => {
     const d = createDeck();
     const id = d.add({ kind: "live" });

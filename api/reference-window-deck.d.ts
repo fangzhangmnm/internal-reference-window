@@ -68,6 +68,8 @@ export declare interface Deck {
     select(index: number): void;
     setView(id: string, vp: CardView): void;
     setPlay(id: string, play: CardPlay): void;
+    /** 改链接卡指向谁（宿主的页改了名）。内容变了 → 通知 "cards"；视图该重取内容。 */
+    setTarget(id: string, target: string | null): void;
     invalidate(id: string): void;
     onChange(fn: (what: DeckChange) => void): () => void;
 }
