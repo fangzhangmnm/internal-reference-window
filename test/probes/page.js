@@ -355,6 +355,27 @@ async function linkedCards() {
   el.remove();
 }
 
+// 底边地板（0.3.2）：屏底被占掉一块（宿主的软键盘）时，窗整个钳回可见区；地板撤了不乱动
+async function bottomFloor() {
+  const el = mount(); const log = listen(el); const vh = window.innerHeight;
+  el.rect = { left: 40, top: vh - 220, width: 240, height: 200 };
+  await wait(30); log.length = 0;
+  const before = el.getBoundingClientRect();
+  el.bottomFloor = 300; el.reclamp(); await wait(30);
+  const r = el.getBoundingClientRect();
+  add("底边地板 300 + reclamp()：窗底不低于「视口高 − 300」，发了 rectchange", r.bottom <= vh - 300 + 0.5 && r.bottom < before.bottom && log.some((e) => e.n === "rectchange"), `bottom ${before.bottom}→${r.bottom} vh=${vh} events=${log.map((e) => e.n).join()}`);
+  add("钳回来之后右下角的缩放把手在地板之上", r.bottom - 5 < vh - 300 && r.height >= 60, `h=${r.height}`);
+  log.length = 0; el.reclamp(); await wait(30);
+  add("位置已经合规时 reclamp() 不动、不发事件", el.getBoundingClientRect().top === r.top && !log.some((e) => e.n === "rectchange"), log.map((e) => e.n).join());
+  el.bottomFloor = 0; el.reclamp(); await wait(30);
+  add("地板撤掉：窗留在原地（不自己跳回去）", Math.abs(el.getBoundingClientRect().top - r.top) < 0.5, `${el.getBoundingClientRect().top} vs ${r.top}`);
+  // 地板比窗还高：窗缩到装得下
+  el.rect = { left: 40, top: 100, width: 240, height: 400 }; el.bottomFloor = vh - 260; el.reclamp(); await wait(30);
+  const q = el.getBoundingClientRect();
+  add("地板很高时：窗的高度也跟着收，仍在顶栏地板之下、底边地板之上", q.top >= el.topFloor - 0.5 && q.bottom <= vh - el.bottomFloor + 0.5, `top=${q.top} bottom=${q.bottom} floor=${el.topFloor}/${el.bottomFloor}`);
+  el.remove();
+}
+
 try {
   await customElements.whenDefined("wp-reference-window");
   await deckDriven();
@@ -364,6 +385,7 @@ try {
   await reorderAndJump();
   await textCards();
   await linkedCards();
+  await bottomFloor();
 } catch (e) {
   add("探针自己炸了", false, String(e?.stack ?? e));
 }

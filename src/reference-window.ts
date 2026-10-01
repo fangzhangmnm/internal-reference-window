@@ -1321,8 +1321,13 @@ export class WpReferenceWindow extends HTMLElement {
     if (!(w > 0) || !(h > 0)) return false;   // display:none（未 open）：开窗时 _afterShow 再钳
     let changed = false;
     const maxW = Math.max(MIN_EDGE, vw - 8), maxH = Math.max(MIN_EDGE, vh - this.topFloor - this.bottomFloor - 8);
-    if (w > maxW) { w = maxW; this.style.width = w + "px"; changed = true; }
-    if (h > maxH) { h = maxH; this.style.height = h + "px"; changed = true; }
+    // 量的是外框（offset*，含边框），写的是 style（可能不含边框）：差的那一圈要扣掉，否则缩完还是高出两像素、钳位置时也按错的高算
+    if (w > maxW || h > maxH) {
+      const cs = getComputedStyle(this), bw = w - parseFloat(cs.width), bh = h - parseFloat(cs.height);
+      if (w > maxW) { this.style.width = Math.max(0, maxW - (bw > 0 ? bw : 0)) + "px"; changed = true; }
+      if (h > maxH) { this.style.height = Math.max(0, maxH - (bh > 0 ? bh : 0)) + "px"; changed = true; }
+      w = this.offsetWidth; h = this.offsetHeight;
+    }
     const r = this.getBoundingClientRect();
     const left = clamp(r.left, 0, vw - w);
     const top = clamp(r.top, this.topFloor, Math.max(this.topFloor, vh - this.bottomFloor - h));
