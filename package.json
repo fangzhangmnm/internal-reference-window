@@ -1,6 +1,6 @@
 {
   "name": "@internal/reference-window",
-  "version": "0.0.0",
+  "version": "0.4.0",
   "description": "PWA 家族参考窗：屏幕上一直在场的那个位子（参考图 / 画布小窗 …）。源 = WeebPaint src/frontend/reference-window.ts；持久化、压缩、菜单、图标全由宿主注入。",
   "type": "module",
   "license": "MIT",
