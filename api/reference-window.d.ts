@@ -13,6 +13,11 @@ export declare interface Card {
     play: CardPlay | null;
     /** 来历标记，平铺不套层。目前只有 "genai"。 */
     origin: string | null;
+    /** 0.4.0「只放内存」（RAM only）：字节不随文档保存，只记原文件多大；下次打开是一个空位，提示重新导入、补回原位。null = 照常存。
+     *  2026-10-09 user「然后能不能加RAM only，就是不落盘，每次重新上传，这个非常有用！！！」→ 选了「B」（存一个空位）——翻掉 2026-09-29 去掉「只在这次有效」的决定。 */
+    ram: {
+        bytes: number;
+    } | null;
 }
 
 /** 卡片种类是开放集。库自带的种类名见各 kinds 入口；宿主可以登记自己的。 */
@@ -68,6 +73,10 @@ export declare interface Deck {
     setPlay(id: string, play: CardPlay): void;
     /** 改链接卡指向谁（宿主的页改了名）。内容变了 → 通知 "cards"；视图该重取内容。 */
     setTarget(id: string, target: string | null): void;
+    /** 0.4.0：这张卡「只放内存」开 / 关。存不存变了 → 通知 "cards"（宿主标脏）。关掉要求手上有字节（空位关不了）。 */
+    setRam(id: string, on: boolean): void;
+    /** 0.4.0：给「只放内存」的空位补回字节（重新导入）。存的东西没变（这种卡本来就不存字节）→ 通知 "view"。 */
+    fill(id: string, bytes: Blob, mime?: string): void;
     invalidate(id: string): void;
     onChange(fn: (what: DeckChange) => void): () => void;
 }
@@ -130,11 +139,53 @@ export declare const REF_ICON_IDS: {
     readonly earlier: "back";
     readonly later: "forward";
     readonly current: "check";
+    readonly play: "play";
+    readonly pause: "pause";
 };
 
 export declare type RefBitmapSource = (ImageBitmap | HTMLImageElement | HTMLCanvasElement | OffscreenCanvas) & {
     close?: () => void;
 };
+
+/** keep = 原样存进文档；compress = 宿主转码后存；ram = 只放内存（不存，下次是空位、提示重新导入）；cancel = 不要。 */
+export declare type RefImportChoice = "keep" | "compress" | "ram" | "cancel";
+
+export declare type RefImportKind = "image" | "text" | "audio" | "video";
+
+export declare interface RefImportOptions {
+    /** 这个宿主画得出来的种类（不在里面的 = 不收、报 unsupported）。 */
+    kinds: readonly string[];
+    transcoder?: RefTranscoder | null;
+    ask?: ((q: RefImportQuestion) => Promise<RefImportChoice>) | null;
+    /** 超过这么多字节才问（按种类；不给 = 不问）。 */
+    askAbove?: Partial<Record<RefImportKind, number>>;
+    /** 超过这么多字节 = 建议「只放内存」（question.suggestRam；user 2026-10-09「这里可能是全家族仓我们唯一一个真的需要nudge用户」）。不给 = 不建议。 */
+    ramAbove?: number;
+}
+
+/** 问用户的时候给宿主的信息。canCompress = 宿主的转码认这种；suggestRam = 超过宿主给的线（ramAbove），面板该把「只放内存」放在前面。 */
+export declare interface RefImportQuestion {
+    name: string;
+    kind: RefImportKind;
+    bytes: number;
+    estimate: number | null;
+    canCompress: boolean;
+    suggestRam: boolean;
+}
+
+/** filled = 补回了「只放内存」的空位（同种类、同名的那张；没新加卡）。 */
+export declare interface RefImportResult {
+    added: Card[];
+    filled: Card[];
+    skipped: RefImportSkip[];
+    notes: string[];
+}
+
+export declare interface RefImportSkip {
+    name: string;
+    why: "unsupported" | "cancelled" | "failed";
+    message?: string;
+}
 
 export declare type RefItem = {
     kind: "image";
@@ -170,6 +221,14 @@ export declare interface RefLabels {
     kindNames?: Record<string, string>;
     /** 链接卡取不到内容时卡上写什么。 */
     linkMissing?: string;
+    /** 0.4.0 音频卡：播放 / 暂停钮、＋ 菜单里的「循环」「速度」（速度项后面跟「0.75×」）。 */
+    play?: string;
+    pause?: string;
+    loop?: string;
+    rate?: string;
+    /** 0.4.0「只放内存」：＋ 菜单里的开关；读回来是空位时卡上那句话（前面库自己写「名字 · 大小」）。 */
+    ram?: string;
+    ramMissing?: string;
 }
 
 /** 链接卡的内容端口：宿主按 target 给字节（图片 / 文字…）。null = 现在给不出来（页被删了、还没加载）。 */
@@ -236,6 +295,17 @@ export declare interface RefPanelRect {
     height: number;
 }
 
+/** 宿主注入的转码：会压哪几种、压完大概多大（给面板上报数；可不给）、怎么压。 */
+export declare interface RefTranscoder {
+    kinds: readonly RefImportKind[];
+    estimate?(kind: RefImportKind, file: Blob): Promise<number | null>;
+    encode(kind: RefImportKind, file: Blob): Promise<{
+        blob: Blob;
+        mime: string;
+        note?: string;
+    }>;
+}
+
 export declare type RefViewport = GestureViewport;
 
 export declare const WP_REFERENCE_WINDOW_TAG = "wp-reference-window";
@@ -255,12 +325,24 @@ export declare class WpReferenceWindow extends HTMLElement {
     /** 拖把地板（宿主注入 = ui/floating-window 运行时量的「顶栏下缘」；缺省 60 = 旧常数，裸挂可用）。
      *  拖 / 恢复 / 视口钳制三条路都吃它——出血区规则只准一个出处（2026-09-02 C2）。 */
     topFloor: number;
+    /** 0.4.0 音频卡的速度档（宿主注入，如 [1, 0.75, 0.5]；保音高）。null = 不给速度（库的缺省；user 2026-10-09「默认不开，moonsinger开」）。 */
+    audioRates: readonly number[] | null;
     /** 底边地板（宿主注入 = 屏底被占掉的高度：app 内软键盘、iOS 键盘那一块……；缺省 0）。拖 / resize / 视口钳制都吃它——
      *  否则右下角的 resize 把手会被键盘盖住（user 2026-09-30「参考窗或者任何浮窗需要保证 move 和 resize 能点到」）。改了之后宿主调 reclamp()。 */
     bottomFloor: number;
     private _canvas;
     private _cctx;
     private _textEl;
+    private _audioLayer;
+    private _aPlay;
+    private _aName;
+    private _aSeek;
+    private _aTime;
+    /** 0.4.0 音频卡：一个窗一个 <audio>，记着正在放哪张卡。翻到别的卡 / 关窗都不停（user「关窗的时候音乐不停」、2026-10-09「1. 不停」）。 */
+    private _audio;
+    private _audioOf;
+    private _audioUrl;
+    private _rate;
     private _emptyEl;
     private _plusEl;
     private _menu;
@@ -308,6 +390,22 @@ export declare class WpReferenceWindow extends HTMLElement {
     set open(v: boolean);
     attributeChangedCallback(name: string, oldV: string | null, newV: string | null): void;
     close(): void;
+    /** 0.4.0 导入漏斗（deck/import.ts）：嗅种类 → 够大就问宿主（ask）→ 原样 / 压（宿主注入的 transcoder）/ 不要 → 进牌组；加进去了就开窗。
+     *  kinds 缺省 = 图片 / 文字 / 音频。结果（加了哪些、哪些没进、为什么）原样还给宿主，由宿主明说。 */
+    importFiles(files: readonly Blob[], opts?: Omit<RefImportOptions, "kinds"> & {
+        kinds?: readonly string[];
+    }): Promise<RefImportResult>;
+    /** 元素从文档里拿掉 = 停（关窗不停；整个窗没了才停）。 */
+    disconnectedCallback(): void;
+    /** 当前这张音频卡：播放 / 暂停（换了一张卡 = 先停上一张、从这张记着的位置放）。不是音频卡 = 什么都不做。 */
+    togglePlay(): void;
+    /** 正在放（任何一张音频卡）。 */
+    get playing(): boolean;
+    private _loadAudio;
+    private _stopAudio;
+    /** 放到哪 / 循环记进卡（视图态：牌组发 view，不标脏）。 */
+    private _saveAudioPos;
+    private _updateAudioLayer;
     get live(): boolean;
     isLive(): boolean;
     get viewport(): RefViewport;
@@ -386,7 +484,9 @@ export declare class WpReferenceWindow extends HTMLElement {
     private _sourceSize;
     private _afterShow;
     private _bind;
+    private _ramMissingText;
     private _menuItems;
+    private _audioMenuItems;
     private _liveMenuId;
     private _liveMenuTargets;
     private _liveMenuItems;

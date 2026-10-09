@@ -33,6 +33,7 @@ import { pinchScaleRot, solveAnchorTranslation } from "./pointer-gesture.ts";
 import type { GestureViewport } from "./pointer-gesture.ts";
 import { createDeck } from "./deck/deck.ts";
 import type { Card, Deck, DeckChange } from "./deck/deck.ts";
+import { importIntoDeck, type RefImportOptions, type RefImportResult } from "./deck/import.ts";
 
 export type RefViewport = GestureViewport;
 export interface RefPanelRect { left: number; top: number; width: number; height: number; }
@@ -62,7 +63,13 @@ export interface RefLabels {
   kindNames?: Record<string, string>;
   /** 链接卡取不到内容时卡上写什么。 */
   linkMissing?: string;
+  /** 0.4.0 音频卡：播放 / 暂停钮、＋ 菜单里的「循环」「速度」（速度项后面跟「0.75×」）。 */
+  play?: string; pause?: string; loop?: string; rate?: string;
+  /** 0.4.0「只放内存」：＋ 菜单里的开关；读回来是空位时卡上那句话（前面库自己写「名字 · 大小」）。 */
+  ram?: string; ramMissing?: string;
 }
+/** 卡上写的大小（「3.2 MB」）。 */
+function fmtBytes(n: number): string { return n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`; }
 // 多参考 item（组件运行时形；持久化映射在宿主 side-windows）。vp=null → 首次显示时 fit。
 export type RefItem =
   | { kind: "image"; bitmap: RefBitmapSource; blob: Blob | null; vp: RefViewport | null }
@@ -112,6 +119,8 @@ export const REF_ICON_IDS = {
   trash: "trash-can", x: "x", plus: "new", prev: "chevron-left", next: "chevron-right",
   // 2026-09-29：挪动顺序 / 跳转列表。都是库里现成的图标（带杆的左右箭头、勾），没有新画。
   earlier: "back", later: "forward", current: "check",
+  // 0.4.0（2026-10-09）：音频卡的播放 / 暂停。图标库里现成的。
+  play: "play", pause: "pause",
 } as const;
 function iconMarkup(id: string): string {
   const sym = (typeof document !== "undefined") ? document.querySelector(`svg symbol[id="${id}"]`) : null;
@@ -258,11 +267,23 @@ canvas:active { cursor: grabbing; }
   pointer-events: none; padding: 12px; font-size: 12px;
 }
 .empty.hidden { display: none; }
+/* 0.4.0 音频卡（2026-10-09）：卡片内容区一个播放 / 暂停 + 名字 + 能拖的进度条 + 时间；不自动放（user「其实我也觉得自动放反而烦，要不还是播放键吧」） */
+.audio { position: absolute; inset: 0; display: none; z-index: 1; align-items: center; gap: 12px; padding: 12px 14px 30px 14px; box-sizing: border-box;
+  color: var(--ink, #e8eaed); background: color-mix(in srgb, var(--bg, #202124) 94%, transparent); }
+.audio.shown { display: flex; }
+.audio .aplay { flex: none; width: 52px; height: 52px; border-radius: 50%; border: 1px solid var(--line, #5f6368); background: transparent; color: inherit; display: grid; place-items: center; cursor: pointer; padding: 0; }
+.audio .aplay svg { width: 26px; height: 26px; }
+.audio .ainfo { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.audio .aname { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.audio .aseek { width: 100%; margin: 0; accent-color: var(--ink, #e8eaed); }
+.audio .atime { font-size: 12px; color: var(--ink-soft, #9aa0a6); font-variant-numeric: tabular-nums; }
+.audio.missing .aname { color: var(--ink-soft, #9aa0a6); font-style: italic; }
 .empty ::slotted(*), .empty p { margin: 0; }
 :host(:focus) { box-shadow: var(--shadow, 0 8px 24px rgba(0, 0, 0, 0.4)), inset 0 0 0 2px color-mix(in srgb, var(--ink, #e8eaed) 45%, transparent); }   /* 有焦点 = 粘贴落这里：一圈细描边 */
 </style>
 <canvas></canvas>
 <div class="text" part="text" data-takes-focus></div>
+<div class="audio" part="audio"><button class="aplay" type="button"></button><div class="ainfo"><div class="aname"></div><input class="aseek" type="range" min="0" max="1000" step="1" value="0"><div class="atime"></div></div></div>
 <div class="empty"><slot name="empty"><p>＋ 导入参考</p></slot></div>
 <div class="move" part="move"></div>
 <button class="plus" part="plus" type="button" aria-haspopup="true">${iconMarkup(REF_ICON_IDS.plus)}</button>
@@ -293,6 +314,8 @@ export class WpReferenceWindow extends HTMLElement {
   /** 拖把地板（宿主注入 = ui/floating-window 运行时量的「顶栏下缘」；缺省 60 = 旧常数，裸挂可用）。
    *  拖 / 恢复 / 视口钳制三条路都吃它——出血区规则只准一个出处（2026-09-02 C2）。 */
   topFloor = DRAG_TOP_FLOOR;
+  /** 0.4.0 音频卡的速度档（宿主注入，如 [1, 0.75, 0.5]；保音高）。null = 不给速度（库的缺省；user 2026-10-09「默认不开，moonsinger开」）。 */
+  audioRates: readonly number[] | null = null;
   /** 底边地板（宿主注入 = 屏底被占掉的高度：app 内软键盘、iOS 键盘那一块……；缺省 0）。拖 / resize / 视口钳制都吃它——
    *  否则右下角的 resize 把手会被键盘盖住（user 2026-09-30「参考窗或者任何浮窗需要保证 move 和 resize 能点到」）。改了之后宿主调 reclamp()。 */
   bottomFloor = 0;
@@ -300,6 +323,10 @@ export class WpReferenceWindow extends HTMLElement {
   private _canvas: HTMLCanvasElement;
   private _cctx: CanvasRenderingContext2D;
   private _textEl: HTMLElement;
+  private _audioLayer: HTMLElement; private _aPlay: HTMLButtonElement; private _aName: HTMLElement; private _aSeek: HTMLInputElement; private _aTime: HTMLElement;
+  /** 0.4.0 音频卡：一个窗一个 <audio>，记着正在放哪张卡。翻到别的卡 / 关窗都不停（user「关窗的时候音乐不停」、2026-10-09「1. 不停」）。 */
+  private _audio: HTMLAudioElement | null = null; private _audioOf: string | null = null; private _audioUrl: string | null = null;
+  private _rate = 1;
   private _emptyEl: HTMLElement;
   private _plusEl: HTMLButtonElement;
   private _menu: RefMenuHandle | null = null;     // 菜单句柄（开着才非 null）
@@ -355,6 +382,14 @@ export class WpReferenceWindow extends HTMLElement {
     root.innerHTML = buildTemplate();
     this._canvas = root.querySelector("canvas")!;
     this._textEl = root.querySelector(".text")!;
+    this._audioLayer = root.querySelector(".audio")!;
+    this._aPlay = root.querySelector(".aplay")!; this._aName = root.querySelector(".aname")!; this._aSeek = root.querySelector(".aseek")!; this._aTime = root.querySelector(".atime")!;
+    this._aPlay.innerHTML = iconMarkup(REF_ICON_IDS.play);
+    this._aPlay.addEventListener("click", () => this.togglePlay());
+    this._aSeek.addEventListener("input", () => { const a = this._audio; if (a && this._audioOf === this._deck.current?.id && Number.isFinite(a.duration)) { a.currentTime = (Number(this._aSeek.value) / 1000) * a.duration; this._updateAudioLayer(); } });
+    this._aSeek.addEventListener("change", () => this._saveAudioPos());
+    // 空格 = 播放 / 暂停（窗有焦点、当前是音频卡时；文字卡 / 进度条自己的键照旧）
+    this.addEventListener("keydown", (e) => { if (e.key === " " && this._deck.current?.kind === "audio" && !(e.composedPath()[0] as Element)?.closest?.("input, .text")) { e.preventDefault(); e.stopPropagation(); this.togglePlay(); } });
     this._emptyEl = root.querySelector(".empty")!;
     this._plusEl = root.querySelector(".plus")!;
     this._chipsEl = root.querySelector(".chips")!;
@@ -389,6 +424,69 @@ export class WpReferenceWindow extends HTMLElement {
     if (name === "open" && oldV !== newV && newV != null) this._afterShow();
   }
   close() { this.open = false; }   // 程序性关（不发事件）
+  /** 0.4.0 导入漏斗（deck/import.ts）：嗅种类 → 够大就问宿主（ask）→ 原样 / 压（宿主注入的 transcoder）/ 不要 → 进牌组；加进去了就开窗。
+   *  kinds 缺省 = 图片 / 文字 / 音频。结果（加了哪些、哪些没进、为什么）原样还给宿主，由宿主明说。 */
+  async importFiles(files: readonly Blob[], opts: Omit<RefImportOptions, "kinds"> & { kinds?: readonly string[] } = {}): Promise<RefImportResult> {
+    const r = await importIntoDeck(this._deck, files, { ...opts, kinds: opts.kinds ?? ["image", "text", "audio"] });
+    if (r.added.length || r.filled.length) this.open = true;
+    return r;
+  }
+  /** 元素从文档里拿掉 = 停（关窗不停；整个窗没了才停）。 */
+  disconnectedCallback() { this._audio?.pause(); }
+
+  // ---- 0.4.0 音频卡 ----
+  /** 当前这张音频卡：播放 / 暂停（换了一张卡 = 先停上一张、从这张记着的位置放）。不是音频卡 = 什么都不做。 */
+  togglePlay(): void {
+    const cur = this._deck.current; if (!cur || cur.kind !== "audio") return;
+    const bytes = cur.bytes ?? this._linked.get(cur.id) ?? null; if (!bytes) return;
+    if (this._audioOf !== cur.id) this._loadAudio(cur, bytes);
+    const a = this._audio!;
+    if (a.paused) a.play().catch((e: unknown) => this._emit("notice", { level: "error", code: "decode-failed", id: cur.id, name: cur.name, message: String((e as { message?: unknown })?.message ?? e) }));
+    else a.pause();
+    this._updateAudioLayer();
+  }
+  /** 正在放（任何一张音频卡）。 */
+  get playing(): boolean { return !!this._audio && !this._audio.paused; }
+  private _loadAudio(c: Card, bytes: Blob) {
+    this._stopAudio();
+    const a = new Audio(), t0 = c.play?.t ?? 0;
+    this._audioUrl = URL.createObjectURL(bytes); a.preload = "auto"; a.src = this._audioUrl;
+    a.loop = !!c.play?.loop; a.playbackRate = this._rate; (a as HTMLAudioElement & { preservesPitch?: boolean }).preservesPitch = true;
+    if (t0 > 0) a.addEventListener("loadedmetadata", () => { a.currentTime = Math.min(t0, Number.isFinite(a.duration) ? a.duration : t0); }, { once: true });
+    for (const ev of ["timeupdate", "play", "pause", "ended", "loadedmetadata", "durationchange"]) a.addEventListener(ev, () => this._updateAudioLayer());
+    a.addEventListener("pause", () => this._saveAudioPos());
+    a.addEventListener("error", () => this._emit("notice", { level: "error", code: "decode-failed", id: c.id, name: c.name, message: "audio could not be decoded" }));
+    this._audio = a; this._audioOf = c.id;
+  }
+  private _stopAudio() {
+    if (this._audio) { this._saveAudioPos(); this._audio.pause(); this._audio.removeAttribute("src"); }
+    if (this._audioUrl) URL.revokeObjectURL(this._audioUrl);
+    this._audio = null; this._audioOf = null; this._audioUrl = null;
+  }
+  /** 放到哪 / 循环记进卡（视图态：牌组发 view，不标脏）。 */
+  private _saveAudioPos() {
+    const a = this._audio, id = this._audioOf; if (!a || !id || this._deck.indexOf(id) < 0) return;
+    this._deck.setPlay(id, { t: Math.round(a.currentTime * 100) / 100, loop: a.loop });
+  }
+  private _updateAudioLayer() {
+    const cur = this._deck.current, isAudio = cur?.kind === "audio";
+    this._audioLayer.classList.toggle("shown", isAudio);
+    if (!isAudio || !cur) return;
+    const a = this._audio && this._audioOf === cur.id ? this._audio : null, playing = !!a && !a.paused;
+    const want = playing ? REF_ICON_IDS.pause : REF_ICON_IDS.play;
+    if (this._aPlay.dataset.icon !== want) { this._aPlay.innerHTML = iconMarkup(want); this._aPlay.dataset.icon = want; }
+    this._aPlay.setAttribute("aria-label", playing ? (this._labels.pause ?? "Pause") : (this._labels.play ?? "Play"));
+    const missing = !cur.bytes && !this._linked.get(cur.id);
+    this._audioLayer.classList.toggle("missing", missing);
+    const hole = missing && !!cur.ram;   // 「只放内存」读回来的空位：说清楚、教怎么补
+    const name = hole ? `${cur.name || this._labels.kindNames?.audio || "audio"} · ${fmtBytes(cur.ram!.bytes)} — ${this._ramMissingText()}`
+      : missing && this._linkMissing.has(cur.id) ? (this._labels.linkMissing ?? "Content unavailable") : (cur.name || this._labels.kindNames?.audio || "audio");
+    if (this._aName.textContent !== name) this._aName.textContent = name;
+    const dur = a && Number.isFinite(a.duration) ? a.duration : null, t = a ? a.currentTime : (cur.play?.t ?? 0);
+    this._aPlay.disabled = missing; this._aSeek.disabled = !dur; this._aSeek.value = String(dur ? Math.round((t / dur) * 1000) : 0);
+    const fmt = (x: number) => `${Math.floor(x / 60)}:${String(Math.floor(x % 60)).padStart(2, "0")}`;
+    this._aTime.textContent = `${fmt(t)}${dur ? ` / ${fmt(dur)}` : ""}${a && a.playbackRate !== 1 ? ` · ${a.playbackRate}×` : ""}${cur.play?.loop ? ` · ${this._labels.loop ?? "loop"}` : ""}`;
+  }
 
   get live(): boolean { return this._deck.current?.kind === "live"; }
   isLive(): boolean { return this.live; }
@@ -687,6 +785,7 @@ export class WpReferenceWindow extends HTMLElement {
     }
     for (const m of [this._texts, this._linked] as Map<string, unknown>[]) for (const id of [...m.keys()]) if (this._deck.indexOf(id) < 0) m.delete(id);
     for (const id of [...this._linkMissing]) if (this._deck.indexOf(id) < 0) this._linkMissing.delete(id);
+    if (this._audioOf && this._deck.indexOf(this._audioOf) < 0) this._stopAudio();   // 正在放的那张被删了 = 停
     for (const c of this._deck.cards()) {
       if (c.kind === "live") continue;
       const bytes = c.bytes ?? this._linked.get(c.id) ?? null;
@@ -758,15 +857,23 @@ export class WpReferenceWindow extends HTMLElement {
     this._updateEmptyHint();
     this._updateChips();
     this._updateTextLayer();
+    this._updateAudioLayer();
     this._invalidate();
   }
   /** 文字卡：内容层显示 / 隐藏 + 灌内容 + 字号 + 滚动位置。 */
   private _updateTextLayer() {
     const cur = this._deck.current;
-    const isText = cur?.kind === "text";
+    const hole = !!cur && cur.kind !== "audio" && cur.kind !== "live" && !!cur.ram && !cur.bytes;   // 「只放内存」的空位（图片 / 文字）：这一层写一句话
+    const isText = cur?.kind === "text" || hole;
     this._textEl.classList.toggle("shown", isText);
-    this._canvas.style.visibility = isText ? "hidden" : "";
+    this._canvas.style.visibility = isText || cur?.kind === "audio" ? "hidden" : "";
     if (!isText || !cur) return;
+    if (hole) {
+      this._textEl.classList.add("missing");
+      const content = `${cur.name || this._labels.kindNames?.[cur.kind] || cur.kind} · ${fmtBytes(cur.ram!.bytes)}\n${this._ramMissingText()}`;
+      if (this._textEl.textContent !== content) this._textEl.textContent = content;
+      return;
+    }
     const text = this._texts.get(cur.id);
     const missing = text === undefined && this._linkMissing.has(cur.id);
     this._textEl.classList.toggle("missing", missing);
@@ -971,15 +1078,21 @@ export class WpReferenceWindow extends HTMLElement {
     ro.observe(this);
   }
 
+  private _ramMissingText(): string { return this._labels.ramMissing ?? "Kept in memory only, not saved. Drop the file here or import it again with ＋."; }
   private _menuItems(): RefMenuItem[] {
-    const l = this._labels;
+    const l = this._labels, cur = this._deck.current;
     return [
       { id: "load",     label: l.load ?? "Load image",   icon: REF_ICON_IDS.folder },
       { id: "paste",    label: l.paste ?? "Paste",       icon: REF_ICON_IDS.paste },
       { id: "cloud",    label: l.cloud ?? "From cloud",  icon: REF_ICON_IDS.cloud, hidden: this.hasAttribute("no-cloud") },
       // 宿主出画面的卡：宿主没给 provider 就不列（写作 app 没有画布可镜像）；多台相机的宿主经 liveTargets 列多项
       ...this._liveMenuItems(),
-      { id: "onetoone", label: l.oneToOne ?? "1:1",      icon: REF_ICON_IDS.oneToOne },
+      { id: "onetoone", label: l.oneToOne ?? "1:1",      icon: REF_ICON_IDS.oneToOne, hidden: this._deck.current?.kind === "audio" },
+      // 0.4.0 音频卡：循环（ROUND 的设想：放在 ＋ 菜单）；速度只在宿主给了档位时列（user 2026-10-09「默认不开，moonsinger开」）。点了不关，可以连点
+      ...(this._deck.current?.kind === "audio" ? this._audioMenuItems() : []),
+      // 只放内存（user 2026-10-09「然后能不能加RAM only，就是不落盘，每次重新上传」）：有自己字节的卡才有（链接卡 / 宿主画面 / 读回来的空位没有）
+      { id: "ram", label: l.ram ?? "Keep in memory only (not saved)", ...(cur?.ram ? { icon: REF_ICON_IDS.current } : {}),
+        hidden: !cur || cur.kind === "live" || !!cur.target || !cur.bytes, separatorBefore: true },
       // 挪动顺序的逃生口（user 2026-09-29「reorder也需要有逃生口」）：点完菜单不关，可以连点；到头的那一项藏起来
       { id: "earlier",  label: l.moveEarlier ?? "Move earlier", icon: REF_ICON_IDS.earlier,
         hidden: this._deck.size < 2 || this._deck.index === 0, separatorBefore: true },
@@ -990,6 +1103,13 @@ export class WpReferenceWindow extends HTMLElement {
       { id: "delete",   label: this._delArmed ? (l.delConfirm ?? l.del ?? "Delete") : (l.del ?? "Delete"),
         icon: REF_ICON_IDS.trash, danger: this._delArmed, hidden: this._deck.size === 0, separatorBefore: true },
       // 「关闭」2026-09-11 从菜单提出成窗右上角 × 钮（user「不然找不到」）
+    ];
+  }
+  private _audioMenuItems(): RefMenuItem[] {
+    const cur = this._deck.current!, l = this._labels, loop = !!cur.play?.loop;
+    return [
+      { id: "loop", label: l.loop ?? "Loop", ...(loop ? { icon: REF_ICON_IDS.current } : {}), separatorBefore: true },
+      ...(this.audioRates ?? []).map((r, i) => ({ id: "rate:" + r, label: `${l.rate ?? "Speed"} ${r}×`, ...(r === this._rate ? { icon: REF_ICON_IDS.current } : {}), ...(i === 0 ? { separatorBefore: true } : {}) })),
     ];
   }
   private _liveMenuId(target: string | null): string { return target == null ? "live" : "live:" + target; }
@@ -1044,6 +1164,22 @@ export class WpReferenceWindow extends HTMLElement {
           this._delArmed = false;
           this._moveCurrent(id === "earlier" ? -1 : 1);
           return "keep";
+        }
+        if (id === "loop") {
+          const cur = this._deck.current; if (!cur) return;
+          const loop = !cur.play?.loop;
+          if (this._audio && this._audioOf === cur.id) this._audio.loop = loop;
+          this._deck.setPlay(cur.id, { t: this._audio && this._audioOf === cur.id ? this._audio.currentTime : (cur.play?.t ?? 0), loop });
+          this._updateAudioLayer(); return "keep";
+        }
+        if (id === "ram") {
+          const cur = this._deck.current; if (cur) this._deck.setRam(cur.id, !cur.ram);
+          return "keep";
+        }
+        if (id.startsWith("rate:")) {
+          this._rate = Number(id.slice(5)) || 1;
+          if (this._audio) this._audio.playbackRate = this._rate;
+          this._updateAudioLayer(); return "keep";
         }
         if (id === "load") this._emit("requestload");
         else if (id === "paste") this._emit("requestpaste");

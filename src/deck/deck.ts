@@ -30,6 +30,9 @@ export interface Card {
   play: CardPlay | null;
   /** 来历标记，平铺不套层。目前只有 "genai"。 */
   origin: string | null;
+  /** 0.4.0「只放内存」（RAM only）：字节不随文档保存，只记原文件多大；下次打开是一个空位，提示重新导入、补回原位。null = 照常存。
+   *  2026-10-09 user「然后能不能加RAM only，就是不落盘，每次重新上传，这个非常有用！！！」→ 选了「B」（存一个空位）——翻掉 2026-09-29 去掉「只在这次有效」的决定。 */
+  ram: { bytes: number } | null;
 }
 
 /** 新卡：只有 kind 必填，其余缺省为空。 */
@@ -89,6 +92,10 @@ export interface Deck {
   setPlay(id: string, play: CardPlay): void;
   /** 改链接卡指向谁（宿主的页改了名）。内容变了 → 通知 "cards"；视图该重取内容。 */
   setTarget(id: string, target: string | null): void;
+  /** 0.4.0：这张卡「只放内存」开 / 关。存不存变了 → 通知 "cards"（宿主标脏）。关掉要求手上有字节（空位关不了）。 */
+  setRam(id: string, on: boolean): void;
+  /** 0.4.0：给「只放内存」的空位补回字节（重新导入）。存的东西没变（这种卡本来就不存字节）→ 通知 "view"。 */
+  fill(id: string, bytes: Blob, mime?: string): void;
   invalidate(id: string): void;
   onChange(fn: (what: DeckChange) => void): () => void;
 }
@@ -136,8 +143,9 @@ export function createDeck(): Deck {
     vp: cloneView(c.vp),
     play: clonePlay(c.play),
     origin: c.origin ?? null,
+    ram: c.ram && Number.isFinite(c.ram.bytes) ? { bytes: c.ram.bytes } : null,
   });
-  const copy = (c: Card): Card => ({ ...c, vp: cloneView(c.vp), play: clonePlay(c.play) });
+  const copy = (c: Card): Card => ({ ...c, vp: cloneView(c.vp), play: clonePlay(c.play), ram: c.ram ? { bytes: c.ram.bytes } : null });
 
   const deck: Deck = {
     get size() { return cards.length; },
@@ -220,6 +228,18 @@ export function createDeck(): Deck {
       if (!c || !p) return;
       if (c.play && c.play.t === p.t && c.play.loop === p.loop) return;
       c.play = p;
+      emit({ type: "view" });
+    },
+
+    setRam(id, on) {
+      const c = deck.get(id); if (!c) return;
+      if (on) { if (c.ram) return; c.ram = { bytes: c.bytes?.size ?? 0 }; }
+      else { if (!c.ram || !c.bytes) return; c.ram = null; }
+      emit({ type: "cards" });
+    },
+    fill(id, bytes, mime) {
+      const c = deck.get(id); if (!c || !c.ram) return;
+      c.bytes = bytes; if (mime) c.mime = mime;
       emit({ type: "view" });
     },
 

@@ -27,3 +27,5 @@ export type {
 
 // 牌组的类型在包根也给一份（用 el.deck 的宿主不必再多写一行 import）；值（createDeck / 编解码）走 "./deck" 入口。
 export type { Card, CardKind, CardPlay, CardView, CarriedItem, Deck, DeckChange, DeckRestore, DeckSnapshot, NewCard } from "./deck/index.ts";
+// 0.4.0：导入漏斗的类型（宿主注入 transcoder / ask 时要写）。漏斗本身 = el.importFiles；零 DOM 的 importIntoDeck / sniffKind 走 "./deck" 入口。
+export type { RefImportKind, RefTranscoder, RefImportQuestion, RefImportChoice, RefImportOptions, RefImportSkip, RefImportResult } from "./deck/index.ts";

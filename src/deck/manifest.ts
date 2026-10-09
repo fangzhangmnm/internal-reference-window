@@ -34,6 +34,8 @@ export interface ManifestItem {
   target?: string;
   origin?: string;
   play?: CardPlay;
+  /** 0.4.0「只放内存」：不写 src，只记原文件多大（空位上给人看）。老版本库读到 = 一张没字节的卡（它再存一次会丢掉这个标记——降级，不崩）。 */
+  ram?: { bytes: number };
   [extra: string]: unknown;
 }
 export interface DeckManifest {
@@ -73,13 +75,19 @@ const EXT_BY_MIME: Record<string, string> = {
   "text/plain": "txt", "text/markdown": "md",
   "video/mp4": "mp4", "video/webm": "webm",
   "audio/mpeg": "mp3", "audio/mp4": "m4a", "audio/ogg": "ogg", "audio/opus": "opus", "audio/webm": "weba",
+  // 0.4.0（2026-10-09，音频卡；Claude Opus 5.5）：以前这几种落成 bin
+  "audio/wav": "wav", "audio/flac": "flac", "audio/aac": "aac", "video/quicktime": "mov",
 };
 const MIME_BY_EXT: Record<string, string> = Object.fromEntries(Object.entries(EXT_BY_MIME).map(([m, e]) => [e, m]));
+/** 同一种格式的别名 mime（浏览器 / 系统各报各的）：只用来定扩展名，不参与反推。 */
+const EXT_BY_MIME_ALIAS: Record<string, string> = {
+  "audio/x-wav": "wav", "audio/wave": "wav", "audio/vnd.wave": "wav", "audio/x-m4a": "m4a", "audio/mp3": "mp3", "audio/x-flac": "flac", "audio/aacp": "aac",
+};
 
 /** mime → 扩展名（不带点）。不认识的图片给 "img"（WeebPaint 既有），其余不认识的给 "bin"。 */
 export function extForMime(mime: string): string {
   const base = (mime || "").split(";")[0]!.trim().toLowerCase();
-  return EXT_BY_MIME[base] ?? (base.startsWith("image/") ? "img" : "bin");
+  return EXT_BY_MIME[base] ?? EXT_BY_MIME_ALIAS[base] ?? (base.startsWith("image/") ? "img" : "bin");
 }
 /** 文件名 → mime（按扩展名猜）。猜不出 → ""。 */
 export function mimeForName(name: string): string {
@@ -154,7 +162,8 @@ export function decodeDeckFromJson(manifestJson: unknown, o: Pick<DecodeOptions,
       carried.push({ at, item: JSON.parse(JSON.stringify(raw)) as Record<string, unknown>, files });
       return;
     }
-    const src = str(raw.src);
+    const ram = isObj(raw.ram) && typeof raw.ram.bytes === "number" && Number.isFinite(raw.ram.bytes) ? { bytes: raw.ram.bytes } : null;
+    const src = ram ? "" : str(raw.src);
     const bytes = src ? o.getFile(src) : null;
     if (at === m.index) { index = cards.length; indexSet = true; }
     cards.push({
@@ -166,6 +175,7 @@ export function decodeDeckFromJson(manifestJson: unknown, o: Pick<DecodeOptions,
       vp: readView(raw.vp),
       play: readPlay(raw.play),
       origin: str(raw.origin) || null,
+      ram,
     });
   });
   if (!indexSet) index = Math.max(0, Math.min(cards.length - 1, m.index));
@@ -199,13 +209,14 @@ export function encodeDeck(s: DeckSnapshot, o: EncodeOptions): Map<string, Blob>
     if (c === viewing) index = position;
     // 键的顺序固定：kind, src, vp 在前（= WeebPaint format 2），新字段在后；空值不写。
     const item: ManifestItem = { kind: c.kind };
-    if (c.bytes) { const n = fileName(dir, position, extForMime(c.mime || c.bytes.type)); files.set(n, c.bytes); item.src = n; }
+    if (c.bytes && !c.ram) { const n = fileName(dir, position, extForMime(c.mime || c.bytes.type)); files.set(n, c.bytes); item.src = n; }   // 只放内存 = 字节不进文件
     item.vp = c.vp ? { tx: c.vp.tx, ty: c.vp.ty, scale: c.vp.scale, rot: c.vp.rot } : null;
     if (c.name) item.name = c.name;
     if (c.mime && (!item.src || mimeForName(item.src) !== c.mime.split(";")[0]!.trim().toLowerCase())) item.mime = c.mime;
     if (c.target) item.target = c.target;
     if (c.origin) item.origin = c.origin;
     if (c.play) item.play = { t: c.play.t, loop: c.play.loop };
+    if (c.ram) item.ram = { bytes: c.ram.bytes };
     items.push(item);
   });
   const manifest: DeckManifest = { version: DECK_MANIFEST_VERSION, index, items };

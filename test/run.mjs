@@ -4,4 +4,5 @@ import "./pointer-gesture.test.mjs";
 import "./redline-guard.test.mjs";
 import "./deck.test.mjs";
 import "./manifest.test.mjs";
+import "./import.test.mjs";
 run();

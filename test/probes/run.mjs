@@ -27,7 +27,7 @@ await new Promise((r) => server.listen(0, "127.0.0.1", r));
 const port = server.address().port;
 
 const t0 = Date.now();
-const browser = await chromium.launch();
+const browser = await chromium.launch({ args: ["--autoplay-policy=no-user-gesture-required"] });   // 音频卡探针里 togglePlay 不是从真点击来的
 let failed = 0, results = [];
 const pageErrors = [];
 try {
@@ -66,6 +66,14 @@ try {
   await page.evaluate(() => { document.getElementById("editor").focus(); });
   const fb2 = await page.evaluate(() => ({ has: window.__focusEl.hasFocus, st: window.__focusState() }));
   results.push({ name: "focus:焦点回宿主编辑区 → hasFocus=false", ok: !fb2.has && fb2.st.active === "editor", info: `hasFocus=${fb2.has} active=${fb2.st.active}` });
+  // 0.4.0 音频卡的播放钮：真实鼠标点 → 照样放，焦点和选区留在宿主
+  await page.evaluate(() => window.__focusReset());
+  const pb = await page.evaluate(() => window.__focusAudio());
+  await page.mouse.move(pb.x, pb.y); await page.mouse.down(); await page.mouse.up();
+  await page.waitForFunction(() => window.__focusEl.playing, null, { timeout: 3000 }).catch(() => {});
+  const ap = await page.evaluate(() => window.__focusState());
+  results.push({ name: "focus:真实鼠标点音频卡的播放钮 → 放起来，焦点和选区还在宿主", ok: ap.playing && ap.active === "editor" && ap.sel === "2-4", info: `playing=${ap.playing} 焦点在 ${ap.active}，选区 ${ap.sel}` });
+  await page.evaluate(() => window.__focusEl.togglePlay());
   // 拖动把手：真实鼠标按住拖 60 像素，窗跟着走
   await page.evaluate(() => window.__focusReset());
   const r0 = await page.evaluate(() => { const r = window.__focusEl.getBoundingClientRect(); return { x: r.left, y: r.top }; });

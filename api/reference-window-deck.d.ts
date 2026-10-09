@@ -13,6 +13,11 @@ export declare interface Card {
     play: CardPlay | null;
     /** 来历标记，平铺不套层。目前只有 "genai"。 */
     origin: string | null;
+    /** 0.4.0「只放内存」（RAM only）：字节不随文档保存，只记原文件多大；下次打开是一个空位，提示重新导入、补回原位。null = 照常存。
+     *  2026-10-09 user「然后能不能加RAM only，就是不落盘，每次重新上传，这个非常有用！！！」→ 选了「B」（存一个空位）——翻掉 2026-09-29 去掉「只在这次有效」的决定。 */
+    ram: {
+        bytes: number;
+    } | null;
 }
 
 /** 卡片种类是开放集。库自带的种类名见各 kinds 入口；宿主可以登记自己的。 */
@@ -70,6 +75,10 @@ export declare interface Deck {
     setPlay(id: string, play: CardPlay): void;
     /** 改链接卡指向谁（宿主的页改了名）。内容变了 → 通知 "cards"；视图该重取内容。 */
     setTarget(id: string, target: string | null): void;
+    /** 0.4.0：这张卡「只放内存」开 / 关。存不存变了 → 通知 "cards"（宿主标脏）。关掉要求手上有字节（空位关不了）。 */
+    setRam(id: string, on: boolean): void;
+    /** 0.4.0：给「只放内存」的空位补回字节（重新导入）。存的东西没变（这种卡本来就不存字节）→ 通知 "view"。 */
+    fill(id: string, bytes: Blob, mime?: string): void;
     invalidate(id: string): void;
     onChange(fn: (what: DeckChange) => void): () => void;
 }
@@ -158,6 +167,11 @@ export declare interface EncodeOptions {
 /** mime → 扩展名（不带点）。不认识的图片给 "img"（WeebPaint 既有），其余不认识的给 "bin"。 */
 export declare function extForMime(mime: string): string;
 
+/** 一个一个进牌组（顺序 = 给的顺序）；每张问不问、压不压按上面的规矩。不抛：每个文件的结果写在 added / skipped 里，调用方如实说。 */
+export declare function importIntoDeck(deck: Deck, files: readonly (Blob & {
+    name?: string;
+})[], o: RefImportOptions): Promise<RefImportResult>;
+
 export declare interface ManifestItem {
     kind: string;
     /** 字节在容器里的文件名（含目录）。 */
@@ -168,6 +182,10 @@ export declare interface ManifestItem {
     target?: string;
     origin?: string;
     play?: CardPlay;
+    /** 0.4.0「只放内存」：不写 src，只记原文件多大（空位上给人看）。老版本库读到 = 一张没字节的卡（它再存一次会丢掉这个标记——降级，不崩）。 */
+    ram?: {
+        bytes: number;
+    };
     [extra: string]: unknown;
 }
 
@@ -181,5 +199,61 @@ export declare function mimeForName(name: string): string;
 export declare type NewCard = {
     kind: CardKind;
 } & Partial<Omit<Card, "id" | "kind">>;
+
+/** keep = 原样存进文档；compress = 宿主转码后存；ram = 只放内存（不存，下次是空位、提示重新导入）；cancel = 不要。 */
+export declare type RefImportChoice = "keep" | "compress" | "ram" | "cancel";
+
+export declare type RefImportKind = "image" | "text" | "audio" | "video";
+
+export declare interface RefImportOptions {
+    /** 这个宿主画得出来的种类（不在里面的 = 不收、报 unsupported）。 */
+    kinds: readonly string[];
+    transcoder?: RefTranscoder | null;
+    ask?: ((q: RefImportQuestion) => Promise<RefImportChoice>) | null;
+    /** 超过这么多字节才问（按种类；不给 = 不问）。 */
+    askAbove?: Partial<Record<RefImportKind, number>>;
+    /** 超过这么多字节 = 建议「只放内存」（question.suggestRam；user 2026-10-09「这里可能是全家族仓我们唯一一个真的需要nudge用户」）。不给 = 不建议。 */
+    ramAbove?: number;
+}
+
+/** 问用户的时候给宿主的信息。canCompress = 宿主的转码认这种；suggestRam = 超过宿主给的线（ramAbove），面板该把「只放内存」放在前面。 */
+export declare interface RefImportQuestion {
+    name: string;
+    kind: RefImportKind;
+    bytes: number;
+    estimate: number | null;
+    canCompress: boolean;
+    suggestRam: boolean;
+}
+
+/** filled = 补回了「只放内存」的空位（同种类、同名的那张；没新加卡）。 */
+export declare interface RefImportResult {
+    added: Card[];
+    filled: Card[];
+    skipped: RefImportSkip[];
+    notes: string[];
+}
+
+export declare interface RefImportSkip {
+    name: string;
+    why: "unsupported" | "cancelled" | "failed";
+    message?: string;
+}
+
+/** 宿主注入的转码：会压哪几种、压完大概多大（给面板上报数；可不给）、怎么压。 */
+export declare interface RefTranscoder {
+    kinds: readonly RefImportKind[];
+    estimate?(kind: RefImportKind, file: Blob): Promise<number | null>;
+    encode(kind: RefImportKind, file: Blob): Promise<{
+        blob: Blob;
+        mime: string;
+        note?: string;
+    }>;
+}
+
+/** 看 mime（再看扩展名）是哪种卡；认不出 = null。 */
+export declare function sniffKind(f: Blob & {
+    name?: string;
+}): RefImportKind | null;
 
 export { }

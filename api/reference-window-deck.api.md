@@ -16,6 +16,9 @@ export interface Card {
     origin: string | null;
     // (undocumented)
     play: CardPlay | null;
+    ram: {
+        bytes: number;
+    } | null;
     target: string | null;
     // (undocumented)
     vp: CardView | null;
@@ -66,6 +69,7 @@ export interface Deck {
     clear(): void;
     // (undocumented)
     readonly current: Card | null;
+    fill(id: string, bytes: Blob, mime?: string): void;
     // (undocumented)
     get(id: string): Card | null;
     // (undocumented)
@@ -84,6 +88,7 @@ export interface Deck {
     select(index: number): void;
     // (undocumented)
     setPlay(id: string, play: CardPlay): void;
+    setRam(id: string, on: boolean): void;
     setTarget(id: string, target: string | null): void;
     // (undocumented)
     setView(id: string, vp: CardView): void;
@@ -196,6 +201,11 @@ export interface EncodeOptions {
 // @public
 export function extForMime(mime: string): string;
 
+// @public
+export function importIntoDeck(deck: Deck, files: readonly (Blob & {
+    name?: string;
+})[], o: RefImportOptions): Promise<RefImportResult>;
+
 // @public (undocumented)
 export interface ManifestItem {
     // (undocumented)
@@ -210,6 +220,9 @@ export interface ManifestItem {
     origin?: string;
     // (undocumented)
     play?: CardPlay;
+    ram?: {
+        bytes: number;
+    };
     src?: string;
     // (undocumented)
     target?: string;
@@ -227,6 +240,80 @@ export function mimeForName(name: string): string;
 export type NewCard = {
     kind: CardKind;
 } & Partial<Omit<Card, "id" | "kind">>;
+
+// @public
+export type RefImportChoice = "keep" | "compress" | "ram" | "cancel";
+
+// @public (undocumented)
+export type RefImportKind = "image" | "text" | "audio" | "video";
+
+// @public (undocumented)
+export interface RefImportOptions {
+    // (undocumented)
+    ask?: ((q: RefImportQuestion) => Promise<RefImportChoice>) | null;
+    askAbove?: Partial<Record<RefImportKind, number>>;
+    kinds: readonly string[];
+    ramAbove?: number;
+    // (undocumented)
+    transcoder?: RefTranscoder | null;
+}
+
+// @public
+export interface RefImportQuestion {
+    // (undocumented)
+    bytes: number;
+    // (undocumented)
+    canCompress: boolean;
+    // (undocumented)
+    estimate: number | null;
+    // (undocumented)
+    kind: RefImportKind;
+    // (undocumented)
+    name: string;
+    // (undocumented)
+    suggestRam: boolean;
+}
+
+// @public
+export interface RefImportResult {
+    // (undocumented)
+    added: Card[];
+    // (undocumented)
+    filled: Card[];
+    // (undocumented)
+    notes: string[];
+    // (undocumented)
+    skipped: RefImportSkip[];
+}
+
+// @public (undocumented)
+export interface RefImportSkip {
+    // (undocumented)
+    message?: string;
+    // (undocumented)
+    name: string;
+    // (undocumented)
+    why: "unsupported" | "cancelled" | "failed";
+}
+
+// @public
+export interface RefTranscoder {
+    // (undocumented)
+    encode(kind: RefImportKind, file: Blob): Promise<{
+        blob: Blob;
+        mime: string;
+        note?: string;
+    }>;
+    // (undocumented)
+    estimate?(kind: RefImportKind, file: Blob): Promise<number | null>;
+    // (undocumented)
+    kinds: readonly RefImportKind[];
+}
+
+// @public
+export function sniffKind(f: Blob & {
+    name?: string;
+}): RefImportKind | null;
 
 // (No @packageDocumentation comment for this package)
 

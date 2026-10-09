@@ -16,6 +16,9 @@ export interface Card {
     origin: string | null;
     // (undocumented)
     play: CardPlay | null;
+    ram: {
+        bytes: number;
+    } | null;
     target: string | null;
     // (undocumented)
     vp: CardView | null;
@@ -63,6 +66,7 @@ export interface Deck {
     clear(): void;
     // (undocumented)
     readonly current: Card | null;
+    fill(id: string, bytes: Blob, mime?: string): void;
     // (undocumented)
     get(id: string): Card | null;
     // (undocumented)
@@ -81,6 +85,7 @@ export interface Deck {
     select(index: number): void;
     // (undocumented)
     setPlay(id: string, play: CardPlay): void;
+    setRam(id: string, on: boolean): void;
     setTarget(id: string, target: string | null): void;
     // (undocumented)
     setView(id: string, vp: CardView): void;
@@ -150,12 +155,69 @@ export const REF_ICON_IDS: {
     readonly earlier: "back";
     readonly later: "forward";
     readonly current: "check";
+    readonly play: "play";
+    readonly pause: "pause";
 };
 
 // @public (undocumented)
 export type RefBitmapSource = (ImageBitmap | HTMLImageElement | HTMLCanvasElement | OffscreenCanvas) & {
     close?: () => void;
 };
+
+// @public
+export type RefImportChoice = "keep" | "compress" | "ram" | "cancel";
+
+// @public (undocumented)
+export type RefImportKind = "image" | "text" | "audio" | "video";
+
+// @public (undocumented)
+export interface RefImportOptions {
+    // (undocumented)
+    ask?: ((q: RefImportQuestion) => Promise<RefImportChoice>) | null;
+    askAbove?: Partial<Record<RefImportKind, number>>;
+    kinds: readonly string[];
+    ramAbove?: number;
+    // (undocumented)
+    transcoder?: RefTranscoder | null;
+}
+
+// @public
+export interface RefImportQuestion {
+    // (undocumented)
+    bytes: number;
+    // (undocumented)
+    canCompress: boolean;
+    // (undocumented)
+    estimate: number | null;
+    // (undocumented)
+    kind: RefImportKind;
+    // (undocumented)
+    name: string;
+    // (undocumented)
+    suggestRam: boolean;
+}
+
+// @public
+export interface RefImportResult {
+    // (undocumented)
+    added: Card[];
+    // (undocumented)
+    filled: Card[];
+    // (undocumented)
+    notes: string[];
+    // (undocumented)
+    skipped: RefImportSkip[];
+}
+
+// @public (undocumented)
+export interface RefImportSkip {
+    // (undocumented)
+    message?: string;
+    // (undocumented)
+    name: string;
+    // (undocumented)
+    why: "unsupported" | "cancelled" | "failed";
+}
 
 // @public (undocumented)
 export type RefItem = {
@@ -186,6 +248,8 @@ export interface RefLabels {
     // (undocumented)
     load?: string;
     // (undocumented)
+    loop?: string;
+    // (undocumented)
     menu?: string;
     // (undocumented)
     move?: string;
@@ -199,7 +263,15 @@ export interface RefLabels {
     // (undocumented)
     paste?: string;
     // (undocumented)
+    pause?: string;
+    play?: string;
+    // (undocumented)
     prev?: string;
+    ram?: string;
+    // (undocumented)
+    ramMissing?: string;
+    // (undocumented)
+    rate?: string;
     // (undocumented)
     resize?: string;
     // (undocumented)
@@ -299,6 +371,20 @@ export interface RefPanelRect {
     width: number;
 }
 
+// @public
+export interface RefTranscoder {
+    // (undocumented)
+    encode(kind: RefImportKind, file: Blob): Promise<{
+        blob: Blob;
+        mime: string;
+        note?: string;
+    }>;
+    // (undocumented)
+    estimate?(kind: RefImportKind, file: Blob): Promise<number | null>;
+    // (undocumented)
+    kinds: readonly RefImportKind[];
+}
+
 // Warning: (ae-forgotten-export) The symbol "GestureViewport" needs to be exported by the entry point index.d.ts
 //
 // @public (undocumented)
@@ -321,6 +407,7 @@ export class WpReferenceWindow extends HTMLElement {
     }): void;
     // (undocumented)
     attributeChangedCallback(name: string, oldV: string | null, newV: string | null): void;
+    audioRates: readonly number[] | null;
     bottomFloor: number;
     clearAll(): void;
     // (undocumented)
@@ -329,6 +416,7 @@ export class WpReferenceWindow extends HTMLElement {
     // (undocumented)
     get deck(): Deck;
     set deck(d: Deck);
+    disconnectedCallback(): void;
     // (undocumented)
     fitToPanel(): void;
     fitToPanelSilent(): void;
@@ -344,6 +432,9 @@ export class WpReferenceWindow extends HTMLElement {
         }>;
     };
     get hasFocus(): boolean;
+    importFiles(files: readonly Blob[], opts?: Omit<RefImportOptions, "kinds"> & {
+        kinds?: readonly string[];
+    }): Promise<RefImportResult>;
     // (undocumented)
     isLive(): boolean;
     // (undocumented)
@@ -367,12 +458,14 @@ export class WpReferenceWindow extends HTMLElement {
     // (undocumented)
     get open(): boolean;
     set open(v: boolean);
+    get playing(): boolean;
     reclamp(): void;
     // (undocumented)
     get rect(): RefPanelRect;
     set rect(o: Partial<RefPanelRect> | null | undefined);
     setItems(items: RefItem[], index?: number): void;
     showLive(target?: string | null, name?: string): void;
+    togglePlay(): void;
     topFloor: number;
     // (undocumented)
     get viewport(): RefViewport;

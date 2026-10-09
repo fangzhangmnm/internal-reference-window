@@ -10,3 +10,5 @@ export {
   DeckManifestTooNewError, DECK_MANIFEST_VERSION, DECK_MANIFEST_NAME,
 } from "./manifest.ts";
 export type { DecodedDeck, DecodeOptions, DeckManifest, EncodeOptions, ManifestItem } from "./manifest.ts";
+export { importIntoDeck, sniffKind } from "./import.ts";
+export type { RefImportKind, RefTranscoder, RefImportQuestion, RefImportChoice, RefImportOptions, RefImportSkip, RefImportResult } from "./import.ts";

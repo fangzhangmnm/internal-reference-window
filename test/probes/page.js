@@ -386,8 +386,85 @@ try {
   await textCards();
   await linkedCards();
   await bottomFloor();
+  await audioCards();
 } catch (e) {
   add("探针自己炸了", false, String(e?.stack ?? e));
+}
+
+// ---- 0.4.0 音频卡 + 只放内存（2026-10-09，Claude Opus 5.5）----
+function wav(sec = 2, rate = 8000) {   // 正弦 440 Hz 单声道 PCM16（浏览器都解得开）
+  const n = Math.round(sec * rate), b = new ArrayBuffer(44 + n * 2), v = new DataView(b), w = (o, t) => { for (let i = 0; i < t.length; i++) v.setUint8(o + i, t.charCodeAt(i)); };
+  w(0, "RIFF"); v.setUint32(4, 36 + n * 2, true); w(8, "WAVEfmt "); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, "data"); v.setUint32(40, n * 2, true);
+  for (let i = 0; i < n; i++) v.setInt16(44 + i * 2, Math.round(Math.sin((i / rate) * 2 * Math.PI * 440) * 8000), true);
+  return new Blob([b], { type: "audio/wav" });
+}
+function audioLayer(el) { return el.shadowRoot.querySelector(".audio"); }
+async function audioCards() {
+  const el = mount(), menu = fakeMenu(el);
+  el.labels = { kindNames: { audio: "音频" }, ram: "只放内存", ramMissing: "只在内存里——拖进来 / 点＋重新导入" };
+  const id = el.deck.add({ kind: "audio", name: "bgm.wav", bytes: wav(), mime: "audio/wav" });
+  await frame();
+  add("audio:音频卡 → 播放层显示、画布藏起来、写着名字", audioLayer(el).classList.contains("shown") && el.shadowRoot.querySelector("canvas").style.visibility === "hidden" && el.shadowRoot.querySelector(".aname").textContent === "bgm.wav", el.shadowRoot.querySelector(".aname").textContent);
+  add("audio:不自动放", !el.playing);
+  let items = menu.items().map((i) => i.id);
+  add("audio:＋ 菜单有循环、没有 1:1；没给 audioRates = 没有速度项", items.includes("loop") && !items.includes("onetoone") && !items.some((x) => x.startsWith("rate:")), items.join(","));
+  menu.opts.onClose?.();
+  el.audioRates = [1, 0.75, 0.5];
+  items = menu.items().map((i) => i.id);
+  add("audio:给了 audioRates = 列出速度项", ["rate:1", "rate:0.75", "rate:0.5"].every((x) => items.includes(x)), items.join(","));
+  add("audio:循环 / 速度点了菜单不关（keep）", menu.pick("loop") === "keep" && menu.pick("rate:0.5") === "keep");
+  menu.opts.onClose?.();
+  add("audio:循环记进卡（play.loop）", el.deck.get(id).play?.loop === true, JSON.stringify(el.deck.get(id).play));
+  el.togglePlay();
+  await until(() => el.playing, 2000);
+  add("audio:播放 → playing、钮换成暂停、速度 0.5 保音高", el.playing && el.shadowRoot.querySelector(".aplay").dataset.icon === "pause" && el.shadowRoot.querySelector(".atime").textContent.includes("0.5×"), el.shadowRoot.querySelector(".atime").textContent);
+  await wait(400);
+  el.togglePlay(); await frame();
+  add("audio:暂停 → 放到哪记进卡（视图态）", !el.playing && el.deck.get(id).play.t > 0, JSON.stringify(el.deck.get(id).play));
+  // 空格（窗有焦点时）
+  el.focus(); el.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true, composed: true, cancelable: true }));
+  await until(() => el.playing, 2000);
+  add("audio:窗有焦点按空格 = 播放 / 暂停", el.playing);
+  // 关窗不停（user「关窗的时候音乐不停」），翻到别的卡也不停（user 2026-10-09「不停」）
+  el.open = false; await frame();
+  add("audio:关窗不停", el.playing); el.open = true;
+  el.deck.add({ kind: "image", name: "红", bytes: await png("#ff0000") });
+  await until(() => center(el) === RED);
+  add("audio:翻到别的卡不停、播放层藏起来", el.playing && !audioLayer(el).classList.contains("shown"), `playing=${el.playing}`);
+  el.deck.remove(id); await frame();
+  add("audio:正在放的那张被删了 = 停", !el.playing);
+
+  // ---- 只放内存 ----
+  const log = []; el.deck.onChange((c) => log.push(c.type));
+  const a2 = el.deck.add({ kind: "audio", name: "big.wav", bytes: wav(1), mime: "audio/wav" });
+  const img = el.deck.add({ kind: "image", name: "截图.png", bytes: await png("#00ff00") });
+  el.deck.select(el.deck.indexOf(a2)); await frame(); log.length = 0;
+  items = menu.items();
+  add("ram:有字节的卡菜单里有「只放内存」（没勾）", items.some((i) => i.id === "ram" && i.label === "只放内存" && !i.icon), items.map((i) => i.id).join(","));
+  menu.pick("ram"); menu.opts.onClose?.();
+  add("ram:点了 = 卡标 ram、发 cards（宿主标脏）", el.deck.get(a2).ram?.bytes === el.deck.get(a2).bytes.size && log.includes("cards"), `${JSON.stringify(el.deck.get(a2).ram)} ${log}`);
+  el.deck.setRam(img, true);
+  const { encodeDeck, decodeDeck } = await import("/dist/deck/index.js");
+  const files = encodeDeck(el.deck.snapshot(), { app: "probe" });
+  const back = await decodeDeck({ app: "probe", knownKinds: ["image", "audio", "text"], getFile: (p) => files.get(p) ?? null });
+  const el2 = mount(), menu2 = fakeMenu(el2); el2.labels = { ramMissing: "只在内存里——拖进来 / 点＋重新导入" };
+  el2.deck.restore(back);
+  el2.deck.select(el2.deck.cards().findIndex((c) => c.name === "big.wav")); await frame();
+  const nm = el2.shadowRoot.querySelector(".aname").textContent;
+  add("ram:读回来 = 空位：写着名字 · 大小 + 怎么补，播放钮按不动", nm.startsWith("big.wav · ") && nm.includes("重新导入") && el2.shadowRoot.querySelector(".aplay").disabled, nm);
+  add("ram:空位的菜单里没有「只放内存」", !menu2.items().some((i) => i.id === "ram")); menu2.opts.onClose?.();
+  el2.deck.select(el2.deck.cards().findIndex((c) => c.name === "截图.png")); await frame();
+  add("ram:图片的空位 = 文字层写一句话", textShown(el2) && textEl(el2).textContent.includes("截图.png") && textEl(el2).textContent.includes("重新导入"), textEl(el2).textContent);
+  const f = new File([await png("#00ff00")], "截图.png", { type: "image/png" });
+  const n0 = el2.deck.size, r = await el2.importFiles([f]);
+  await until(() => center(el2) === GREEN);
+  add("ram:同名拖回来 = 补回原位（不新加）、画出来", r.filled.length === 1 && r.added.length === 0 && el2.deck.size === n0 && center(el2) === GREEN && !textShown(el2), `filled=${r.filled.length} added=${r.added.length} size=${n0}→${el2.deck.size} ${center(el2)}`);
+
+  // ---- 导入漏斗：问宿主（宿主自己的面板）----
+  let q = null;
+  const r2 = await el2.importFiles([new File([wav(1)], "a.wav", { type: "audio/wav" })], { ask: async (x) => { q = x; return "keep"; }, askAbove: { audio: 100 }, ramAbove: 10 });
+  add("import:超过门槛 = 问；问的东西里有名字、种类、大小、建议只放内存", q?.name === "a.wav" && q.kind === "audio" && q.bytes > 100 && q.suggestRam === true && q.canCompress === false && r2.added.length === 1, JSON.stringify(q));
 }
 
 // ---- 焦点探针用的两个钩子（由 run.mjs 用真实鼠标驱动；合成的 .click() 不会挪焦点，测不出来）----
@@ -414,12 +491,17 @@ window.__focusSetup = async () => {
     "×": rectOf(".close"),
   };
 };
+window.__focusAudio = () => {
+  const el = window.__focusEl;
+  el.deck.add({ kind: "audio", name: "bgm.wav", bytes: wav(), mime: "audio/wav" });
+  return new Promise((r) => requestAnimationFrame(() => { const b = el.shadowRoot.querySelector(".aplay").getBoundingClientRect(); r({ x: b.left + b.width / 2, y: b.top + b.height / 2 }); }));
+};
 window.__focusState = () => {
   const ed = document.getElementById("editor"), a = document.activeElement;
   const el = window.__focusEl, r = el.getBoundingClientRect();
   return {
     active: a === ed ? "editor" : (a?.tagName ?? "null").toLowerCase(), sel: `${ed.selectionStart}-${ed.selectionEnd}`,
-    open: el.open, index: el.deck.index, opens: window.__focusMenu.opens, anchor: window.__focusMenu.opts?.anchor?.className ?? "",
+    open: el.open, index: el.deck.index, playing: el.playing, opens: window.__focusMenu.opens, anchor: window.__focusMenu.opts?.anchor?.className ?? "",
   };
 };
 window.__focusReset = () => {
