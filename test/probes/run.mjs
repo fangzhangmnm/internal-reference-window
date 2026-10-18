@@ -54,6 +54,7 @@ try {
       "上一张": () => [st.index !== before.index, `第 ${before.index + 1} 张 → 第 ${st.index + 1} 张`],
       "下一张": () => [st.index !== before.index, `第 ${before.index + 1} 张 → 第 ${st.index + 1} 张`],
       "×": () => [before.open === true && st.open === false, `窗 ${before.open ? "开" : "关"} → ${st.open ? "开" : "关"}`],
+      "左上角圆钮": () => [before.min === false && st.min === true, `收着 ${before.min} → ${st.min}`],
     }[name];
     if (effect) { const [ok, info] = effect(); results.push({ name: `click:真实鼠标点「${name}」照样有效`, ok, info }); }
   }
@@ -106,6 +107,18 @@ try {
   await page.mouse.move(m2.x + 22, m2.y + 22); await page.mouse.down(); await page.mouse.up();
   const m3 = await page.evaluate(() => { const el = window.__focusEl; const r = el.getBoundingClientRect(); return { w: r.width, h: r.height, right: r.right, bottom: r.bottom, vw: innerWidth, vh: innerHeight, min: el.minimized, mins: [...window.__mins] }; });
   results.push({ name: "click:0.4.1 点小图标 = 恢复原大小、钳在屏幕内、发 minimizechange(false)", ok: !m3.min && Math.round(m3.w) === Math.round(m0.w) && Math.round(m3.h) === Math.round(m0.h) && m3.right <= m3.vw + 0.5 && m3.bottom <= m3.vh + 0.5 && m3.mins.join() === "true,false", info: `${Math.round(m3.w)}×${Math.round(m3.h)} 右下 ${Math.round(m3.right)},${Math.round(m3.bottom)}（视口 ${m3.vw}×${m3.vh}） 事件 ${m3.mins}` });
+  // 0.4.3 左上角圆钮（user 2026-10-18「左上角那个很akward很难点的…换成一个点了之后变成图标，拖动是拖动的多义按钮」）：
+  //   看得见的圆钮在可点区里；真实鼠标点一下 = 缩成小图标、就在原地；再点小图标 = 恢复；拖 3 px 的手抖不算拖（照样是点）
+  await page.evaluate(() => { window.__focusReset(); window.__mins = []; });
+  const k = await page.evaluate(() => { const el = window.__focusEl; const r = el.getBoundingClientRect(); const kb = el.shadowRoot.querySelector(".move .knob").getBoundingClientRect(); const mv = el.shadowRoot.querySelector(".move").getBoundingClientRect(); return { x: r.left, y: r.top, kx: kb.left - r.left, ky: kb.top - r.top, kw: kb.width, mw: mv.width }; });
+  results.push({ name: "0.4.3 左上角是 28 px 圆钮、在 ≥ 36 px 可点区里", ok: Math.round(k.kw) === 28 && k.mw >= 36 && k.kx >= 0 && k.ky >= 0 && k.kx + k.kw <= k.mw, info: `圆钮 ${Math.round(k.kw)} px @ ${Math.round(k.kx)},${Math.round(k.ky)} · 可点区 ${Math.round(k.mw)} px` });
+  await page.mouse.move(k.x + k.kx + 14, k.y + k.ky + 14); await page.mouse.down();
+  await page.mouse.move(k.x + k.kx + 16, k.y + k.ky + 15, { steps: 2 }); await page.mouse.up();
+  const t1 = await page.evaluate(() => { const el = window.__focusEl; const r = el.getBoundingClientRect(); return { min: el.minimized, x: r.left, y: r.top, w: r.width, mins: [...window.__mins] }; });
+  results.push({ name: "click:0.4.3 点左上角圆钮（手抖 2 px）= 缩成小图标、就在原地、发 minimizechange", ok: t1.min && Math.round(t1.w) === 44 && Math.round(t1.x) === Math.round(k.x) && Math.round(t1.y) === Math.round(k.y) && t1.mins.join() === "true", info: `收着=${t1.min} ${Math.round(t1.w)} px @ ${Math.round(t1.x)},${Math.round(t1.y)}（原 ${Math.round(k.x)},${Math.round(k.y)}） 事件 ${t1.mins}` });
+  await page.mouse.move(t1.x + 22, t1.y + 22); await page.mouse.down(); await page.mouse.up();
+  const t2 = await page.evaluate(() => ({ min: window.__focusEl.minimized, mins: [...window.__mins] }));
+  results.push({ name: "click:0.4.3 再点小图标 = 恢复", ok: !t2.min && t2.mins.join() === "true,false", info: `收着=${t2.min} 事件 ${t2.mins}` });
 } catch (e) {
   results.push({ name: "探针没跑完", ok: false, info: String(e?.message ?? e) });
 } finally {

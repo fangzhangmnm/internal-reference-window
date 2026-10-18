@@ -206,6 +206,7 @@ export declare interface RefLabels {
     del?: string;
     delConfirm?: string;
     closeWin?: string;
+    /** move = 左上角圆钮的提示（0.4.3 起：点一下缩成小图标、按住拖动挪位置；以前只是拖把手）。 */
     prev?: string;
     next?: string;
     menu?: string;

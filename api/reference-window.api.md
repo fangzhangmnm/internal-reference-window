@@ -266,7 +266,6 @@ export interface RefLabels {
     // (undocumented)
     pause?: string;
     play?: string;
-    // (undocumented)
     prev?: string;
     ram?: string;
     // (undocumented)

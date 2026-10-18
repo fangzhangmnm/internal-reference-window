@@ -478,10 +478,10 @@ window.__focusSetup = async () => {
   ed.focus(); ed.setSelectionRange(2, 4);
   window.__focusEl = el;
   const rectOf = (sel) => { const r = el.shadowRoot.querySelector(sel).getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; };
-  // 三角形把手：点靠角的那一侧（另一半被裁掉了，点中心会落空）
+  // 缩放把手是三角形：点靠角的那一侧（另一半被裁掉了，点中心会落空）；左上角 0.4.3 起是圆钮，点圆心（点一下 = 缩成小图标）
   const host = el.getBoundingClientRect();
   return {
-    "移动把手": { x: host.left + 5, y: host.top + 5 },
+    "左上角圆钮": rectOf(".move .knob"),
     "缩放把手": { x: host.right - 5, y: host.bottom - 5 },
     "＋": rectOf(".plus"),
     "上一张": rectOf('[data-page="-1"]'),
@@ -501,12 +501,12 @@ window.__focusState = () => {
   const el = window.__focusEl, r = el.getBoundingClientRect();
   return {
     active: a === ed ? "editor" : (a?.tagName ?? "null").toLowerCase(), sel: `${ed.selectionStart}-${ed.selectionEnd}`,
-    open: el.open, index: el.deck.index, playing: el.playing, opens: window.__focusMenu.opens, anchor: window.__focusMenu.opts?.anchor?.className ?? "",
+    open: el.open, min: el.minimized, index: el.deck.index, playing: el.playing, opens: window.__focusMenu.opens, anchor: window.__focusMenu.opts?.anchor?.className ?? "",
   };
 };
 window.__focusReset = () => {
   const ed = document.getElementById("editor");
-  window.__focusEl.open = true; window.__focusEl.classList.remove("away", "idle");
+  window.__focusEl.open = true; window.__focusEl.minimized = false; window.__focusEl.classList.remove("away", "idle");
   window.__focusMenu.opts?.onClose?.(); window.__focusMenu.opts = null;
   ed.focus(); ed.setSelectionRange(2, 4);
 };

@@ -54,6 +54,7 @@ export interface RefLiveTarget { target: string | null; label: string }
 export interface RefLabels {
   load?: string; paste?: string; cloud?: string; live?: string; oneToOne?: string;
   del?: string; delConfirm?: string; closeWin?: string;
+  /** move = 左上角圆钮的提示（0.4.3 起：点一下缩成小图标、按住拖动挪位置；以前只是拖把手）。 */
   prev?: string; next?: string; menu?: string; move?: string; resize?: string; resizeAria?: string;
   /** ＋ 菜单：把当前这张卡往前 / 往后挪一位。 */
   moveEarlier?: string; moveLater?: string;
@@ -187,33 +188,28 @@ canvas:active { cursor: grabbing; }
    与右下 resize 把手同形制同尺寸——点阵裁成左上三角、无底无框，只靠 opacity 呼吸。gizmo 纹理非 icon。 */
 /* 两把手在暗图（三次元相片）上看不清（user 0830）→ 与 ＋ 同款「半透明主题底 + 主色 gizmo」：
    元素本身裁成三角形底板（clip-path），纹理走 ::after 用 currentColor=--ink。浅主题=白底黑点、暗主题=黑底白点。 */
-/* 0.4.1（user 2026-10-13「参考窗左上角其实一直比较难拖」）：以前 clip-path 裁在元素本身上——**能点中的区域也被裁成了三角**，
-   22 px 方块只剩一半能按。现在元素 = 透明的 36 px 方块（触屏 44 px）专管按，看得见的三角底板 + 点阵挪到 ::before / ::after，样子不变。 */
+/* 0.4.1（user 2026-10-13「参考窗左上角其实一直比较难拖」）：可点区放大到 36 px 透明方块，看得见的还是 22 px 小三角——人瞄着三角按，还是点不中。
+   0.4.3（user 2026-10-18「左上角那个很akward很难点的。。。总是点不中，优化一下，或者干脆换成一个点了之后变成图标，拖动是拖动的多义按钮」）：
+   换成和 ＋ / × 同款的圆钮（28 px，半透明主题底 + 图标），可点区 36 px（触屏 44 px）。**点一下 = 缩成小图标**（小图标就出现在同一个位置、同一个图标，
+   再点一下恢复），**按住拖 = 挪窗**（动过 4 px 才算拖）。图标用小窗那个（= 收起后的小图标），看得出「点了会变成什么」。 */
 .move {
   position: absolute; left: 0; top: 0; width: 36px; height: 36px; z-index: 3;
+  padding: 0; border: none; background: transparent;
   cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none;
   color: var(--ink, #e8eaed); opacity: 0.85;
   transition: opacity 0.35s;
 }
 @media (pointer: coarse) { .move { width: 44px; height: 44px; } }
-.move::before {
-  content: ""; position: absolute; left: 0; top: 0; width: 22px; height: 22px;
+.move .knob {
+  position: absolute; left: 4px; top: 4px; width: 28px; height: 28px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
   background: color-mix(in srgb, var(--bg, #202124) 72%, transparent);
-  clip-path: polygon(0 0, 100% 0, 0 100%);
+  pointer-events: none;
 }
+.move .knob svg { width: 16px; height: 16px; }
 .move:hover { opacity: 1; }
+.move:hover .knob { background: color-mix(in srgb, var(--bg, #202124) 90%, transparent); }
 .move:active { cursor: grabbing; }
-/* 显式 6 点（3-2-1 三角排布，pitch 5.5）：离底板斜边 ≥3px，不出半颗点（user 0830「白的应该超过裁切一点」） */
-.move::after {
-  content: ""; position: absolute; left: 0; top: 0; width: 22px; height: 22px;
-  background-image:
-    radial-gradient(circle at 4px 4px,     currentColor 1.2px, transparent 1.7px),
-    radial-gradient(circle at 9.5px 4px,   currentColor 1.2px, transparent 1.7px),
-    radial-gradient(circle at 15px 4px,    currentColor 1.2px, transparent 1.7px),
-    radial-gradient(circle at 4px 9.5px,   currentColor 1.2px, transparent 1.7px),
-    radial-gradient(circle at 9.5px 9.5px, currentColor 1.2px, transparent 1.7px),
-    radial-gradient(circle at 4px 15px,    currentColor 1.2px, transparent 1.7px);
-}
 /* resize 把手：斜纹沿 styles.css .float-panel-resize 家族标准件；19（user 0830：视觉上斜纹比点阵显大，稍小一点） */
 .grip {
   position: absolute; right: 0; bottom: 0; width: 19px; height: 19px;
@@ -308,7 +304,7 @@ canvas:active { cursor: grabbing; }
 <div class="text" part="text" data-takes-focus></div>
 <div class="audio" part="audio"><button class="aplay" type="button"></button><div class="ainfo"><div class="aname"></div><input class="aseek" type="range" min="0" max="1000" step="1" value="0"><div class="atime"></div></div></div>
 <div class="empty"><slot name="empty"><p>＋ 导入参考</p></slot></div>
-<div class="move" part="move"></div>
+<button class="move" part="move" type="button" title="Tap: minimize · drag: move" aria-label="Tap: minimize · drag: move"><span class="knob">${iconMarkup(REF_ICON_IDS.pip)}</span></button>
 <button class="plus" part="plus" type="button" aria-haspopup="true">${iconMarkup(REF_ICON_IDS.plus)}</button>
 <button class="close" part="close" type="button">${iconMarkup(REF_ICON_IDS.x)}</button>
 <div class="grip" part="grip"></div>
@@ -965,7 +961,7 @@ export class WpReferenceWindow extends HTMLElement {
     this._plusEl.addEventListener("click", () => this._toggleMenu());
     // ×（2026-09-11 从菜单提出来）：用户交互关窗 → 发 openchange（宿主写 desk + 同步主菜单 toggle 态）
     root.querySelector(".close")!.addEventListener("click", () => { this.open = false; this._emit("openchange", { open: false }); });
-    // 拖动把手（左上角点阵）：拖整窗，钳在视口内
+    // 左上角圆钮（0.4.3）：按住拖过 4 px = 拖整窗（钳在视口内）；没拖就松手 = 缩成小图标（同 ＋ 菜单那一项，发 minimizechange）；键盘回车 / 空格同点一下
     const move = root.querySelector(".move") as HTMLElement;
     move.addEventListener("pointerdown", (e) => {
       const r = this.getBoundingClientRect();
@@ -976,6 +972,7 @@ export class WpReferenceWindow extends HTMLElement {
     move.addEventListener("pointermove", (e) => {
       const d = this._panelDrag;
       if (!d || e.pointerId !== d.id) return;
+      if (!d.moved && Math.hypot(e.clientX - d.sx, e.clientY - d.sy) < 4) return;   // 手抖不算拖（松手 = 点）
       d.moved = true;
       const w = this.offsetWidth, h = this.offsetHeight;
       const left = clamp(d.ol + (e.clientX - d.sx), 0, window.innerWidth - w);
@@ -985,13 +982,16 @@ export class WpReferenceWindow extends HTMLElement {
       this._emitRect();
     });
     const endMove = (e: PointerEvent) => {
-      if (this._panelDrag && e.pointerId === this._panelDrag.id) {
+      const d = this._panelDrag;
+      if (d && e.pointerId === d.id) {
         try { move.releasePointerCapture(e.pointerId); } catch {}
         this._panelDrag = null;
+        if (e.type === "pointerup" && !d.moved) this._setMinimizedByUser(true);
       }
     };
     move.addEventListener("pointerup", endMove);
     move.addEventListener("pointercancel", endMove);
+    move.addEventListener("click", (e) => { if ((e as MouseEvent).detail === 0) this._setMinimizedByUser(true); });   // 键盘（detail 0）；鼠标 / 触屏的点在 pointerup 里处理过了
 
     // 0.4.1 收起后的小图标：按下拖过 4 px = 挪位置（钳在视口内，发 rectchange——宿主存的宽高不变，见 rect getter）；没拖就松手 = 恢复。
     const bubble = root.querySelector(".bubble") as HTMLElement;
