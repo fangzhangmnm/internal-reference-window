@@ -67,6 +67,8 @@ export interface RefLabels {
   play?: string; pause?: string; loop?: string; rate?: string;
   /** 0.4.0「只放内存」：＋ 菜单里的开关；读回来是空位时卡上那句话（前面库自己写「名字 · 大小」）。 */
   ram?: string; ramMissing?: string;
+  /** 0.4.1：＋ 菜单里的「收成小图标」；收起后那颗小图标的提示（点它恢复、拖它挪位置）。 */
+  minimize?: string; restore?: string;
 }
 /** 卡上写的大小（「3.2 MB」）。 */
 function fmtBytes(n: number): string { return n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`; }
@@ -185,19 +187,25 @@ canvas:active { cursor: grabbing; }
    与右下 resize 把手同形制同尺寸——点阵裁成左上三角、无底无框，只靠 opacity 呼吸。gizmo 纹理非 icon。 */
 /* 两把手在暗图（三次元相片）上看不清（user 0830）→ 与 ＋ 同款「半透明主题底 + 主色 gizmo」：
    元素本身裁成三角形底板（clip-path），纹理走 ::after 用 currentColor=--ink。浅主题=白底黑点、暗主题=黑底白点。 */
+/* 0.4.1（user 2026-10-13「参考窗左上角其实一直比较难拖」）：以前 clip-path 裁在元素本身上——**能点中的区域也被裁成了三角**，
+   22 px 方块只剩一半能按。现在元素 = 透明的 36 px 方块（触屏 44 px）专管按，看得见的三角底板 + 点阵挪到 ::before / ::after，样子不变。 */
 .move {
-  position: absolute; left: 0; top: 0; width: 22px; height: 22px; z-index: 3;
+  position: absolute; left: 0; top: 0; width: 36px; height: 36px; z-index: 3;
   cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none;
   color: var(--ink, #e8eaed); opacity: 0.85;
+  transition: opacity 0.35s;
+}
+@media (pointer: coarse) { .move { width: 44px; height: 44px; } }
+.move::before {
+  content: ""; position: absolute; left: 0; top: 0; width: 22px; height: 22px;
   background: color-mix(in srgb, var(--bg, #202124) 72%, transparent);
   clip-path: polygon(0 0, 100% 0, 0 100%);
-  transition: opacity 0.35s;
 }
 .move:hover { opacity: 1; }
 .move:active { cursor: grabbing; }
 /* 显式 6 点（3-2-1 三角排布，pitch 5.5）：离底板斜边 ≥3px，不出半颗点（user 0830「白的应该超过裁切一点」） */
 .move::after {
-  content: ""; position: absolute; inset: 0;
+  content: ""; position: absolute; left: 0; top: 0; width: 22px; height: 22px;
   background-image:
     radial-gradient(circle at 4px 4px,     currentColor 1.2px, transparent 1.7px),
     radial-gradient(circle at 9.5px 4px,   currentColor 1.2px, transparent 1.7px),
@@ -242,6 +250,21 @@ canvas:active { cursor: grabbing; }
    .away = 能悬停的设备指针离窗 → 全隐（进窗即现）；.idle = 闲置 2.5s 淡至 .35（触屏无悬停只有这档，
    全隐会让 chips 变盲操作）。菜单弹层不在其列。 */
 :host(.idle) .plus, :host(.idle) .close, :host(.idle) .grip, :host(.idle) .chips, :host(.idle) .move { opacity: 0.35; }
+/* 0.4.1 收成小图标（user 2026-10-09「reference window加一个最小化（变成一个可拖动小图标）的功能，以后让opus弄」）：
+   窗缩成 44 px 圆钮（尺寸用 !important 压住 style 里的宽高——原来的宽高原样留着，恢复就回去）；里面只剩 .bubble：拖 = 挪位置，点 = 恢复。 */
+:host([minimized]) {
+  box-sizing: border-box !important; width: 44px !important; height: 44px !important; min-width: 0 !important; min-height: 0 !important;
+  border-radius: 50% !important; resize: none !important; background-color: color-mix(in srgb, var(--bg, #202124) 85%, transparent);
+}
+:host([minimized]) :is(canvas, .text, .audio, .empty, .move, .plus, .close, .grip, .chips) { display: none !important; }
+.bubble { display: none; }
+:host([minimized]) .bubble {
+  display: flex; position: absolute; inset: 0; z-index: 4; align-items: center; justify-content: center;
+  padding: 0; border: none; border-radius: 50%; background: transparent; color: var(--ink, #e8eaed);
+  cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none;
+}
+:host([minimized]) .bubble:active { cursor: grabbing; }
+.bubble svg { width: 22px; height: 22px; pointer-events: none; }
 :host(.away) .plus, :host(.away) .close, :host(.away) .grip, :host(.away) .chips, :host(.away) .move { opacity: 0; }
 /* 菜单不在 shadow 里（2026-09-02）：挂 body 走 ui/popup-menu——absolute 子节点会被 :host overflow:hidden 裁、
    也困在 :host 的 stacking context 里被别的浮窗盖（老错误复发根因）。 */
@@ -289,6 +312,7 @@ canvas:active { cursor: grabbing; }
 <button class="plus" part="plus" type="button" aria-haspopup="true">${iconMarkup(REF_ICON_IDS.plus)}</button>
 <button class="close" part="close" type="button">${iconMarkup(REF_ICON_IDS.x)}</button>
 <div class="grip" part="grip"></div>
+<button class="bubble" part="bubble" type="button">${iconMarkup(REF_ICON_IDS.pip)}</button>
 <div class="chips hidden">
   <button class="chip" data-page="-1" type="button">${iconMarkup(REF_ICON_IDS.prev)}</button>
   <button class="chip chip-count" data-jump type="button">1/1</button>
@@ -297,7 +321,7 @@ canvas:active { cursor: grabbing; }
 `; }
 
 export class WpReferenceWindow extends HTMLElement {
-  static get observedAttributes() { return ["open", "no-cloud"]; }
+  static get observedAttributes() { return ["open", "no-cloud", "minimized"]; }
   /** 0.3.1：窗身可拿焦点（粘贴归焦点）。属性只能在这里加（自定义元素构造器里加属性 = createElement 直接炸）；宿主可自定 tabindex。 */
   connectedCallback() { if (!this.hasAttribute("tabindex")) this.tabIndex = 0; }   // no-cloud：宿主云功能关 → 藏云盘选图项
 
@@ -415,7 +439,19 @@ export class WpReferenceWindow extends HTMLElement {
   /** 键盘焦点在参考窗上（含窗内文字卡）= 宿主的 Ctrl+V 应落到这里（0.3.1，user「看 focus」）。 */
   get hasFocus(): boolean { return document.activeElement === this; }
   get open(): boolean { return this.hasAttribute("open"); }
-  set open(v: boolean) { this.toggleAttribute("open", !!v); if (!v) this._menu?.close(); }   // 关窗 = 菜单一并收（菜单挂 body，不随窗隐）
+  set open(v: boolean) { this.toggleAttribute("open", !!v); if (!v) { this._menu?.close(); this.toggleAttribute("minimized", false); } }   // 关窗 = 菜单一并收（菜单挂 body，不随窗隐）；收着的小图标也一起还原（再开 = 整窗）
+  /** 0.4.1 收成小图标（程序性 set 不发事件，同 open）。收着的时候 `rect` 照样报原来的宽高（只有位置跟着小图标走），宿主存的大小不会被 44×44 盖掉。 */
+  get minimized(): boolean { return this.hasAttribute("minimized"); }
+  set minimized(v: boolean) {
+    if (!!v === this.minimized) return;
+    if (v) {   // 收起前记下外框大小（rect 的口径 = 外框，含边框），收着的时候 rect 报它
+      const r = this.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) this._restoreSize = { w: r.width, h: r.height };
+    }
+    this.toggleAttribute("minimized", !!v);
+    if (v) this._menu?.close(); else this._afterRestore();
+  }
+  private _restoreSize: { w: number; h: number } | null = null;
   attributeChangedCallback(name: string, oldV: string | null, newV: string | null) {
     if (name === "no-cloud") {
       this._menu?.refresh();   // 云盘项显隐由 items() 现算
@@ -504,6 +540,10 @@ export class WpReferenceWindow extends HTMLElement {
 
   get rect(): RefPanelRect {
     const r = this.getBoundingClientRect();
+    if (this.minimized) {   // 收着：位置是小图标的，宽高报收起前的外框（没量到 = style 里的宽高 + 边框；都没有 = 默认 280 × 320）
+      const w = this._restoreSize?.w ?? (parseFloat(this.style.width) || 280) + 2, h = this._restoreSize?.h ?? (parseFloat(this.style.height) || 320) + 2;
+      return { left: r.left, top: r.top, width: w, height: h };
+    }
     return { left: r.left, top: r.top, width: r.width, height: r.height };
   }
   set rect(o: Partial<RefPanelRect> | null | undefined) {
@@ -513,6 +553,7 @@ export class WpReferenceWindow extends HTMLElement {
       this.style.top = Math.max(CLAMP_MIN_TOP, this.topFloor, o.top) + "px";
       if (o.width) this.style.width = o.width + "px";
       if (o.height) this.style.height = o.height + "px";
+      if (this.minimized && o.width && o.height) this._restoreSize = null;   // 宿主收着的时候灌了新大小：以 style 为准
       this._clampIntoViewport();   // 越界持久化（大屏存小屏开）：右/下边同样钳回（未 open 时 _afterShow 兜）
     } else if (!this.style.left || !this.style.top) {
       this.style.left = SPAWN_LEFT + "px";
@@ -951,6 +992,35 @@ export class WpReferenceWindow extends HTMLElement {
     move.addEventListener("pointerup", endMove);
     move.addEventListener("pointercancel", endMove);
 
+    // 0.4.1 收起后的小图标：按下拖过 4 px = 挪位置（钳在视口内，发 rectchange——宿主存的宽高不变，见 rect getter）；没拖就松手 = 恢复。
+    const bubble = root.querySelector(".bubble") as HTMLElement;
+    let bub: { id: number; sx: number; sy: number; ol: number; ot: number; moved: boolean } | null = null;
+    bubble.addEventListener("pointerdown", (e) => {
+      const r = this.getBoundingClientRect();
+      bub = { id: e.pointerId, sx: e.clientX, sy: e.clientY, ol: r.left, ot: r.top, moved: false };
+      try { bubble.setPointerCapture(e.pointerId); } catch {}
+      e.preventDefault();
+    });
+    bubble.addEventListener("pointermove", (e) => {
+      if (!bub || e.pointerId !== bub.id) return;
+      const dx = e.clientX - bub.sx, dy = e.clientY - bub.sy;
+      if (!bub.moved && Math.hypot(dx, dy) < 4) return;
+      bub.moved = true;
+      const w = this.offsetWidth, h = this.offsetHeight;
+      this.style.left = clamp(bub.ol + dx, 0, window.innerWidth - w) + "px";
+      this.style.top = clamp(bub.ot + dy, this.topFloor, Math.max(this.topFloor, window.innerHeight - this.bottomFloor - h)) + "px";
+      this._emitRect();
+    });
+    const endBubble = (e: PointerEvent) => {
+      if (!bub || e.pointerId !== bub.id) return;
+      try { bubble.releasePointerCapture(e.pointerId); } catch {}
+      const tap = !bub.moved && e.type === "pointerup";
+      bub = null;
+      if (tap) this._setMinimizedByUser(false);
+    };
+    bubble.addEventListener("pointerup", endBubble);
+    bubble.addEventListener("pointercancel", endBubble);
+
     // 菜单 = ui/popup-menu 深模块（挂 body；外点关 + 吞掉那一击 + Escape 都在模块里）。这里只剩闲置计时。
     root.addEventListener("pointerdown", () => this._pokeIdle(), { capture: true });
     root.addEventListener("pointermove", () => this._pokeIdle(), { capture: true, passive: true });
@@ -1091,6 +1161,7 @@ export class WpReferenceWindow extends HTMLElement {
       // 0.4.0 音频卡：循环（ROUND 的设想：放在 ＋ 菜单）；速度只在宿主给了档位时列（user 2026-10-09「默认不开，moonsinger开」）。点了不关，可以连点
       ...(this._deck.current?.kind === "audio" ? this._audioMenuItems() : []),
       // 只放内存（user 2026-10-09「然后能不能加RAM only，就是不落盘，每次重新上传」）：有自己字节的卡才有（链接卡 / 宿主画面 / 读回来的空位没有）
+      { id: "minimize", label: l.minimize ?? "Minimize to icon", icon: REF_ICON_IDS.pip, separatorBefore: true },
       { id: "ram", label: l.ram ?? "Keep in memory only (not saved)", ...(cur?.ram ? { icon: REF_ICON_IDS.current } : {}),
         hidden: !cur || cur.kind === "live" || !!cur.target || !cur.bytes, separatorBefore: true },
       // 挪动顺序的逃生口（user 2026-09-29「reorder也需要有逃生口」）：点完菜单不关，可以连点；到头的那一项藏起来
@@ -1190,6 +1261,7 @@ export class WpReferenceWindow extends HTMLElement {
           this._emitItems();
         }
         else if (id === "onetoone") this.oneToOne();
+        else if (id === "minimize") this._setMinimizedByUser(true);
       },
     });
     this._menuAnchor = this._menu ? this._plusEl : null;
@@ -1450,6 +1522,21 @@ export class WpReferenceWindow extends HTMLElement {
    *  native CSS resize 四条路）。返回是否有修正。 */
   /** 地板变了（键盘露 / 收、顶栏高度变）之后宿主调：整窗钳回可见区，动了就发 rectchange。 */
   reclamp(): void { if (this._clampIntoViewport()) this._emitRect(); }
+  /** 0.4.1 用户收起 / 恢复（菜单项、点小图标）：改状态 + 发 minimizechange（宿主想记住就记）。 */
+  private _setMinimizedByUser(v: boolean): void {
+    if (v === this.minimized) return;
+    this.minimized = v;
+    this._emit("minimizechange", { minimized: v });
+  }
+  /** 恢复成整窗之后：小图标可能被挪到了右下角——整窗钳回可见区；画面重新按窗大小铺（收着时 canvas 是隐藏的）。 */
+  private _afterRestore(): void {
+    if (!this.open) return;
+    if (this._clampIntoViewport()) this._emitRect();
+    this._resizeCanvasToBody();
+    if (this.live) this._liveDirty = true;
+    this._pokeIdle();
+    this._invalidate();
+  }
   private _clampIntoViewport(): boolean {
     const vw = window.innerWidth, vh = window.innerHeight;
     if (!(vw > 0) || !(vh > 0)) return false;

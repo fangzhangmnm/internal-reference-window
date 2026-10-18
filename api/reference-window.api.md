@@ -251,6 +251,7 @@ export interface RefLabels {
     loop?: string;
     // (undocumented)
     menu?: string;
+    minimize?: string;
     // (undocumented)
     move?: string;
     moveEarlier?: string;
@@ -276,6 +277,8 @@ export interface RefLabels {
     resize?: string;
     // (undocumented)
     resizeAria?: string;
+    // (undocumented)
+    restore?: string;
 }
 
 // @public
@@ -452,6 +455,8 @@ export class WpReferenceWindow extends HTMLElement {
     markLiveDirty(target?: string | null): void;
     // (undocumented)
     menuPort: RefMenuPort | null;
+    get minimized(): boolean;
+    set minimized(v: boolean);
     // (undocumented)
     static get observedAttributes(): string[];
     oneToOne(): void;

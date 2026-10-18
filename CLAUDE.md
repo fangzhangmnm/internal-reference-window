@@ -27,3 +27,7 @@
   - **导入漏斗** `importIntoDeck` / `el.importFiles(files, {transcoder, ask, askAbove, ramAbove})`（`src/deck/import.ts`，零 DOM）：嗅种类 → 超过 `askAbove`（按种类）才问 → 原样 / 压 / 只放内存 / 不要。**库不带编码器**（`RefTranscoder` 宿主注入：会压哪几种、估多大、怎么压），**库不画对话框**（`ask` 宿主注入）；默认原样（user「我们mp3其实默认不压，导入的时候有一个对话框告诉你大小，然后问你要不要压。图片也一样」）。
   - MIME 表补 wav / flac / aac / mov + 别名（x-wav、x-m4a、audio/mp3…，只用来定扩展名）。清单不升版本：`ram` 是可选字段，老库读到 = 照旧当有 src 的卡（没 src = 空字节的卡）。视频卡这一版不做（接口里留着种类）。
   - 测试：`test/import.test.mjs`（导入漏斗、只放内存往返 / 补位 / setRam）+ 探针 `audioCards()`（20 条）+ 播放钮真实鼠标焦点。
+- **0.4.1 收成小图标 + 左上角好拖（2026-10-18 发版，Claude Opus 5.5；周账 F-59，user 10-18「4 你和fable又华丽丽的无视了…做。记账fable省」）**：
+  - **收成小图标**（user 10-09「reference window加一个最小化（变成一个可拖动小图标）的功能，以后让opus弄」）：＋ 菜单「收成小图标」（`labels.minimize`）→ 窗缩成 44 px 圆钮（图标 = 家族 sprite `picture-in-picture`，宿主要内联它）；拖它 = 挪位置（钳在视口内、发 rectchange），点它 = 恢复原大小（钳回屏幕内）。用户收起 / 恢复发 `minimizechange {minimized}`；`el.minimized` 程序性 set 不发事件（同 open）。收着时 `rect` 报**收起前的外框宽高**（位置跟着小图标走）——宿主照常存 rect 不会把 44×44 当成窗的大小。关窗（open=false）顺手还原，再开 = 整窗。新图标零张（菜单项是文字，小图标用库里现成的）。
+  - **左上角难拖**（user 10-13「参考窗左上角其实一直比较难拖」）：根因 = `clip-path` 裁在把手元素本身上，能按中的区域也被裁成三角，22 px 方块只剩一半。现在元素是透明 36 px 方块（触屏 44 px）专管按，看得见的三角底板 + 点阵挪到伪元素，样子不变（截图核过）。
+  - 探针 +4（真实鼠标：点老三角外 (30, 12) 也拖得动；菜单收起 → 44 px、rect 报原 242×202、事件；拖小图标挪 300,200；点它恢复原大小、钳在屏内、事件 true,false），94 全过。为什么是 patch：只加一个可选状态 + 一个菜单项，接口零破坏（user 要 minor 就改）。

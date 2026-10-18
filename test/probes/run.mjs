@@ -81,6 +81,29 @@ try {
   await page.mouse.move(r0.x + 65, r0.y + 45, { steps: 5 }); await page.mouse.up();
   const r1 = await page.evaluate(() => { const r = window.__focusEl.getBoundingClientRect(); return { x: r.left, y: r.top, st: window.__focusState() }; });
   results.push({ name: "click:真实鼠标拖移动把手 → 窗跟着走，焦点不动", ok: Math.round(r1.x - r0.x) === 60 && Math.round(r1.y - r0.y) === 40 && r1.st.active === "editor", info: `Δ=${Math.round(r1.x - r0.x)},${Math.round(r1.y - r0.y)} 焦点在 ${r1.st.active}` });
+  // 0.4.1 左上角难拖（user 2026-10-13）：以前能按中的只有 22 px 三角的一半；现在点 (30, 12)——在老三角外、新的 36 px 方块里——也拖得动
+  await page.evaluate(() => window.__focusReset());
+  const q0 = await page.evaluate(() => { const r = window.__focusEl.getBoundingClientRect(); return { x: r.left, y: r.top }; });
+  await page.mouse.move(q0.x + 30, q0.y + 12); await page.mouse.down();
+  await page.mouse.move(q0.x + 30 + 50, q0.y + 12 + 20, { steps: 5 }); await page.mouse.up();
+  const q1 = await page.evaluate(() => { const r = window.__focusEl.getBoundingClientRect(); return { x: r.left, y: r.top }; });
+  results.push({ name: "click:0.4.1 把手可点区放大：点老三角之外 (30, 12) 也拖得动", ok: Math.round(q1.x - q0.x) === 50 && Math.round(q1.y - q0.y) === 20, info: `Δ=${Math.round(q1.x - q0.x)},${Math.round(q1.y - q0.y)}` });
+  // 0.4.1 收成小图标（user 2026-10-09）：＋ 菜单「收成小图标」→ 44 px 圆钮、rect 还报原来的宽高；拖它 = 挪；点它 = 恢复原大小
+  const m0 = await page.evaluate(() => { const el = window.__focusEl; window.__mins = []; el.addEventListener("minimizechange", (e) => window.__mins.push(e.detail.minimized)); const r = el.getBoundingClientRect(); return { w: r.width, h: r.height }; });
+  await page.evaluate(() => window.__focusReset());
+  const plus = await page.evaluate(() => { const r = window.__focusEl.shadowRoot.querySelector(".plus").getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+  await page.mouse.move(plus.x, plus.y); await page.mouse.down(); await page.mouse.up();
+  const listed = await page.evaluate(() => (window.__focusMenu.opts?.items?.() ?? window.__focusMenu.opts?.items ?? []).some?.((it) => it.id === "minimize"));
+  await page.evaluate(() => window.__focusMenu.opts.onPick("minimize"));
+  const m1 = await page.evaluate(() => { const el = window.__focusEl; const r = el.getBoundingClientRect(); return { w: r.width, h: r.height, x: r.left, y: r.top, rw: el.rect.width, rh: el.rect.height, mins: [...window.__mins], min: el.minimized }; });
+  results.push({ name: "click:0.4.1 ＋ 菜单「收成小图标」→ 44 px 圆钮，rect 照报原宽高，发 minimizechange", ok: listed !== false && m1.min && Math.round(m1.w) === 44 && Math.round(m1.h) === 44 && Math.round(m1.rw) === Math.round(m0.w) && Math.round(m1.rh) === Math.round(m0.h) && m1.mins.join() === "true", info: `菜单里有：${listed} · 外框 ${Math.round(m1.w)}×${Math.round(m1.h)} · rect ${Math.round(m1.rw)}×${Math.round(m1.rh)}（原 ${Math.round(m0.w)}×${Math.round(m0.h)}） · 事件 ${m1.mins}` });
+  await page.mouse.move(m1.x + 22, m1.y + 22); await page.mouse.down();
+  await page.mouse.move(m1.x + 22 + 300, m1.y + 22 + 200, { steps: 6 }); await page.mouse.up();
+  const m2 = await page.evaluate(() => { const el = window.__focusEl; const r = el.getBoundingClientRect(); return { x: r.left, y: r.top, min: el.minimized }; });
+  results.push({ name: "click:0.4.1 拖小图标 = 挪位置（还收着）", ok: m2.min && Math.round(m2.x - m1.x) === 300 && Math.round(m2.y - m1.y) === 200, info: `Δ=${Math.round(m2.x - m1.x)},${Math.round(m2.y - m1.y)} 收着=${m2.min}` });
+  await page.mouse.move(m2.x + 22, m2.y + 22); await page.mouse.down(); await page.mouse.up();
+  const m3 = await page.evaluate(() => { const el = window.__focusEl; const r = el.getBoundingClientRect(); return { w: r.width, h: r.height, right: r.right, bottom: r.bottom, vw: innerWidth, vh: innerHeight, min: el.minimized, mins: [...window.__mins] }; });
+  results.push({ name: "click:0.4.1 点小图标 = 恢复原大小、钳在屏幕内、发 minimizechange(false)", ok: !m3.min && Math.round(m3.w) === Math.round(m0.w) && Math.round(m3.h) === Math.round(m0.h) && m3.right <= m3.vw + 0.5 && m3.bottom <= m3.vh + 0.5 && m3.mins.join() === "true,false", info: `${Math.round(m3.w)}×${Math.round(m3.h)} 右下 ${Math.round(m3.right)},${Math.round(m3.bottom)}（视口 ${m3.vw}×${m3.vh}） 事件 ${m3.mins}` });
 } catch (e) {
   results.push({ name: "探针没跑完", ok: false, info: String(e?.message ?? e) });
 } finally {

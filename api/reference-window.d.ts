@@ -229,6 +229,9 @@ export declare interface RefLabels {
     /** 0.4.0「只放内存」：＋ 菜单里的开关；读回来是空位时卡上那句话（前面库自己写「名字 · 大小」）。 */
     ram?: string;
     ramMissing?: string;
+    /** 0.4.1：＋ 菜单里的「收成小图标」；收起后那颗小图标的提示（点它恢复、拖它挪位置）。 */
+    minimize?: string;
+    restore?: string;
 }
 
 /** 链接卡的内容端口：宿主按 target 给字节（图片 / 文字…）。null = 现在给不出来（页被删了、还没加载）。 */
@@ -388,6 +391,10 @@ export declare class WpReferenceWindow extends HTMLElement {
     get hasFocus(): boolean;
     get open(): boolean;
     set open(v: boolean);
+    /** 0.4.1 收成小图标（程序性 set 不发事件，同 open）。收着的时候 `rect` 照样报原来的宽高（只有位置跟着小图标走），宿主存的大小不会被 44×44 盖掉。 */
+    get minimized(): boolean;
+    set minimized(v: boolean);
+    private _restoreSize;
     attributeChangedCallback(name: string, oldV: string | null, newV: string | null): void;
     close(): void;
     /** 0.4.0 导入漏斗（deck/import.ts）：嗅种类 → 够大就问宿主（ask）→ 原样 / 压（宿主注入的 transcoder）/ 不要 → 进牌组；加进去了就开窗。
@@ -519,6 +526,10 @@ export declare class WpReferenceWindow extends HTMLElement {
      *  native CSS resize 四条路）。返回是否有修正。 */
     /** 地板变了（键盘露 / 收、顶栏高度变）之后宿主调：整窗钳回可见区，动了就发 rectchange。 */
     reclamp(): void;
+    /** 0.4.1 用户收起 / 恢复（菜单项、点小图标）：改状态 + 发 minimizechange（宿主想记住就记）。 */
+    private _setMinimizedByUser;
+    /** 恢复成整窗之后：小图标可能被挪到了右下角——整窗钳回可见区；画面重新按窗大小铺（收着时 canvas 是隐藏的）。 */
+    private _afterRestore;
     private _clampIntoViewport;
 }
 
