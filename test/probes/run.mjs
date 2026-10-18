@@ -96,6 +96,8 @@ try {
   const listed = await page.evaluate(() => (window.__focusMenu.opts?.items?.() ?? window.__focusMenu.opts?.items ?? []).some?.((it) => it.id === "minimize"));
   await page.evaluate(() => window.__focusMenu.opts.onPick("minimize"));
   const m1 = await page.evaluate(() => { const el = window.__focusEl; const r = el.getBoundingClientRect(); return { w: r.width, h: r.height, x: r.left, y: r.top, rw: el.rect.width, rh: el.rect.height, mins: [...window.__mins], min: el.minimized }; });
+  const bubbleTitle = await page.evaluate(() => window.__focusEl.shadowRoot.querySelector(".bubble").getAttribute("aria-label"));
+  results.push({ name: "0.4.2 小图标有提示 / aria-label（labels.restore，没给就是英文默认）", ok: !!bubbleTitle, info: `aria-label=${bubbleTitle}` });
   results.push({ name: "click:0.4.1 ＋ 菜单「收成小图标」→ 44 px 圆钮，rect 照报原宽高，发 minimizechange", ok: listed !== false && m1.min && Math.round(m1.w) === 44 && Math.round(m1.h) === 44 && Math.round(m1.rw) === Math.round(m0.w) && Math.round(m1.rh) === Math.round(m0.h) && m1.mins.join() === "true", info: `菜单里有：${listed} · 外框 ${Math.round(m1.w)}×${Math.round(m1.h)} · rect ${Math.round(m1.rw)}×${Math.round(m1.rh)}（原 ${Math.round(m0.w)}×${Math.round(m0.h)}） · 事件 ${m1.mins}` });
   await page.mouse.move(m1.x + 22, m1.y + 22); await page.mouse.down();
   await page.mouse.move(m1.x + 22 + 300, m1.y + 22 + 200, { steps: 6 }); await page.mouse.up();

@@ -312,7 +312,7 @@ canvas:active { cursor: grabbing; }
 <button class="plus" part="plus" type="button" aria-haspopup="true">${iconMarkup(REF_ICON_IDS.plus)}</button>
 <button class="close" part="close" type="button">${iconMarkup(REF_ICON_IDS.x)}</button>
 <div class="grip" part="grip"></div>
-<button class="bubble" part="bubble" type="button">${iconMarkup(REF_ICON_IDS.pip)}</button>
+<button class="bubble" part="bubble" type="button" title="Restore (drag to move)" aria-label="Restore (drag to move)">${iconMarkup(REF_ICON_IDS.pip)}</button>
 <div class="chips hidden">
   <button class="chip" data-page="-1" type="button">${iconMarkup(REF_ICON_IDS.prev)}</button>
   <button class="chip chip-count" data-jump type="button">1/1</button>
@@ -577,6 +577,7 @@ export class WpReferenceWindow extends HTMLElement {
     setTitle('[data-page="1"]', l.next);
     setTitle("[data-jump]", l.jump);
     setTitle(".grip", l.resize, l.resizeAria);
+    setTitle(".bubble", l.restore);   // 0.4.2：收起后的小图标（0.4.1 漏挂了；没给 = 模板里的英文默认）
   }
 
   // ---- 多参考内容 API（宿主灌注；程序性，不发事件）----
