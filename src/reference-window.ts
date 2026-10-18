@@ -183,6 +183,8 @@ canvas:active { cursor: grabbing; }
 .close { right: 4px; }
 .plus { right: 36px; }
 .plus svg, .close svg { width: 16px; height: 16px; pointer-events: none; }
+/* 0.4.4：三颗圆钮加一圈淡边——底色和卡片一样暗的时候（KudsRocket 文字卡）圆钮整个看不见、只剩个图标（10-18 截图核过） */
+.plus, .close, .move .knob { box-shadow: 0 0 0 1px color-mix(in srgb, var(--ink, #e8eaed) 28%, transparent); }
 .plus:hover, .close:hover { background: color-mix(in srgb, var(--bg, #202124) 90%, transparent); }
 /* 拖动把手（user 0830「左上角加一点小点一样的拖动区域…三角形布局，没有按钮式高亮，参考 resize」）：
    与右下 resize 把手同形制同尺寸——点阵裁成左上三角、无底无框，只靠 opacity 呼吸。gizmo 纹理非 icon。 */
@@ -268,7 +270,7 @@ canvas:active { cursor: grabbing; }
    底色用主题底而不是点阵：字要能读。选中文字需要把焦点拿过来 → data-takes-focus 放行（其余 gizmo 不抢焦点）。 */
 .text {
   position: absolute; inset: 0; display: none; overflow: auto; z-index: 1;
-  box-sizing: border-box; padding: 10px 12px 30px 12px;
+  box-sizing: border-box; padding: 36px 12px 30px 12px;   /* 0.4.4：上边留出圆钮那一排（4 + 28 px），字不再被左上角圆钮 / ＋ / × 盖住 */
   color: var(--ink, #e8eaed);
   background: color-mix(in srgb, var(--bg, #202124) 94%, transparent);
   font-size: calc(13px * var(--ref-text-scale, 1)); line-height: 1.55;
