@@ -12,6 +12,8 @@
 | 3 | **genai 来历标记：核一遍** | user 08-30「顺便留一个以后 genai era 可以用的加图的 api」；09-29「参考加 ai flag 同意，没啥意义，只要不让数据结构太难看（比如多一层封装），可以随手做」 | **已有**：`Card.origin: string \| null`（`src/deck/deck.ts`，清单 `origin` 字段，`manifest.ts` 读写）；`el.addImage(bitmap, blob, { origin: "genai" })` / `addText(..., { origin })` 就是程序化加图的口。账本里「待核」可以划掉；lane 7 只需确认 WeebPaint 整改 spec §5 `addReferenceImage(blob)` 那条漏斗接的是它（宿主的事，nudge 即可）。 |
 | 4 | 账本里标「做了」的 8 条 | `20261021-ledger.md` §1 | 不用动；改 UI 时别退回去（丝薄、移开隐藏 gizmo、瞥一眼零代价、圆钮）。 |
 
+| 5 | **格式版本纪律：deck manifest 加 minor / patch 两键 + 「minor 更新」判定给宿主**（周账 F-69；user 10-21「这个变成全家的版本纪律」「三级语义 同意」） | 规矩稿 = 家族根 `ai-docs/20261021-format-version-discipline.md`（道 6 写）；家规一行在家族根 `CLAUDE.md`「版本号约定」节末 | 现状：`DECK_MANIFEST_VERSION = 1` + `migrateDeckManifest` 已有（`src/deck/manifest.ts` STEPS + 冻结样本）。要加：保留整数 `version` 当 major，再加可选整数键 `minor` / `patch`（缺 = 0）；major 比自己新 → 拒开；minor 比自己新 → 能开能存 + 未知键原样带回 + 告诉宿主一次（给宿主一个判定 / 回调）；patch → 静默。升级代码还在 STEPS 那个文件夹。统筹 10-21 转给 lane 7，道 1 从此不碰本仓。 |
+
 **不做**：多个参考窗同屏（user 10-21「不要」）。账本 §1 末尾那三条转述（关闭键 / 入口 toggle / 多参考）按 10-21 这句算关掉。
 
 ## 1. 规矩（本仓 `CLAUDE.md` 全有，这里只提最容易踩的）
