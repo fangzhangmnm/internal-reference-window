@@ -1,6 +1,6 @@
 # 参考窗 lane 7 交接：全做（user 2026-10-21）
 
-> created 20261021 by Claude Fable 5.1 · as-of 0.4.4 · 给 lane 7 的开工稿。**收工回执见 §3（0.5.0 在 main 做完、未发版，2026-10-21 夜叫停）。**user 10-21 原话：「参考窗你写 handoff，我开一个新的 lane 7，全做。音视频应该是当此有效，后来应该拍了。多个参考窗同屏不要。」
+> created 20261021 by Claude Fable 5.1 · as-of 0.4.4 · 给 lane 7 的开工稿。**收工回执见 §3（0.5.0 已发，2026-10-21 夜）。**user 10-21 原话：「参考窗你写 handoff，我开一个新的 lane 7，全做。音视频应该是当此有效，后来应该拍了。多个参考窗同屏不要。」
 > 从这份交接起，参考窗仓（`20260929 internal-reference-window/`）归 lane 7 独占写；道 1（库道）不再碰它。账本 = `20261021-ledger.md`（user 诉求 ↔ 现状，先读它）。
 
 ## 0. 做什么（按顺序）
@@ -40,4 +40,4 @@
 | 5 清单 minor / patch | **done** | `src/deck/manifest.ts`：拍子 1.1.0、`DecodedDeck.verdict` 判定给宿主、顶层 / 条目未知键直通；冻结样本 `test/fixtures/manifest-1.1.0.json`；node 测试 +6 |
 | 不做 | 多个参考窗同屏 | 账本 §2 标关 |
 
-发版：**没发**。统筹 10-21 夜转 user「叫停一波，留 catsup 和 moonsinger」→ 整轮在 main 做完（package.json 仍 0.0.0 开发期），不打 tag、不发版。**下次接手**：user 说「发」→ `package.json` 写 0.5.0 → `npm run release`（build + node 测试 + pnpm pack）→ commit「0.5.0：…」→ `git tag v0.5.0` → `gh release create v0.5.0 internal-reference-window-0.5.0.tgz` → 回 0.0.0 commit → 给统筹一条「参考窗 0.5.0 冻结」+ 宿主要做的五条（`../CLAUDE.md` 0.5.0 条末尾）。
+发版：**0.5.0 已发**（2026-10-21 夜）。中间统筹转 user「叫停一波」停过一次，同夜 user「你现在是opus，剩下的可以尾巴收干净吗？」+ 统筹「参考窗 0.5.0 现在发版」→ Claude Opus 5.5 补两处视频小漏洞（`40d06ed`）后 tag `v0.5.0` + gh release + tgz，仓回 0.0.0。宿主要做的五条 = `../CLAUDE.md` 0.5.0 条末尾，已交统筹转四个宿主道。edited by Claude Opus 5.5 2026-10-21
