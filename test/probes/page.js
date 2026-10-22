@@ -485,6 +485,30 @@ async function videoCards() {
   el.deck.remove(id); await frame();
   add("video:删了这张 → <video> 从 shadow 里拿掉", !el.shadowRoot.querySelector("video.vsrc"));
   el.remove(); el2.remove();
+
+  // 一张视频放着时翻到另一张视频（edited by Claude Opus 5.5 2026-10-21）：旧的拿掉、只剩一个 <video>，新的放得动、画面在走
+  const el3 = mount();
+  el3.deck.add({ kind: "video", name: "A", bytes: blob, mime: "video/webm" });
+  await until(() => gray(el3) >= 0, 5000);
+  el3.togglePlay(); await until(() => el3.playing, 2000);
+  el3.deck.add({ kind: "video", name: "B", bytes: blob, mime: "video/webm" });
+  el3.togglePlay();   // 紧接着放 B：A 的 pause 事件还在路上
+  await until(() => el3.playing && gray(el3) >= 0, 3000);
+  const g0 = gray(el3); await wait(600);
+  add("video:A 放着换到 B 立刻放 → shadow 里只剩一个 <video>、B 的画面在走", el3.shadowRoot.querySelectorAll("video.vsrc").length === 1 && el3.playing && gray(el3) > g0, `videos=${el3.shadowRoot.querySelectorAll("video.vsrc").length} playing=${el3.playing} gray ${g0}→${gray(el3)}`);
+  el3.togglePlay(); el3.remove();
+
+  // 链接视频卡：字节向宿主要；宿主 invalidate → 换新 <video> 重取，不接着放旧字节
+  const el4 = mount(); let served = 0;
+  el4.linkProvider = async () => { served++; return blob; };
+  const lid = el4.deck.add({ kind: "video", target: "clip:1", name: "链接视频" });
+  await until(() => gray(el4) >= 0, 5000);
+  const v1 = el4.shadowRoot.querySelector("video.vsrc");
+  el4.deck.invalidate(lid);
+  await until(() => { const vv = el4.shadowRoot.querySelector("video.vsrc"); return !!vv && vv !== v1 && gray(el4) >= 0; }, 5000);
+  const v2 = el4.shadowRoot.querySelector("video.vsrc");
+  add("link:链接视频卡 → 向宿主要字节画出来；invalidate → 换新 <video> 重取", served === 2 && !!v1 && !!v2 && v1 !== v2 && !v1.isConnected && gray(el4) >= 0, `served=${served} replaced=${v1 !== v2} gray=${gray(el4)}`);
+  el4.remove();
 }
 
 // ---- 0.4.0 音频卡 + 只放内存（2026-10-09，Claude Opus 5.5）----

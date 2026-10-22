@@ -602,18 +602,20 @@ export class WpReferenceWindow extends HTMLElement {
     (v as HTMLVideoElement & { preservesPitch?: boolean }).preservesPitch = true;
     this._videoUrl = URL.createObjectURL(bytes); v.src = this._videoUrl;
     this._vFrameDur = c.play?.fps ? 1 / c.play.fps : null; this._vFrameTime = null;
-    v.addEventListener("loadedmetadata", () => { if (t0 > 0) v.currentTime = Math.min(t0, Number.isFinite(v.duration) ? v.duration : t0); this._updateVideoLayer(); }, { once: true });
-    v.addEventListener("loadeddata", () => {   // 第一帧到了：没看过的卡先按窗适应一次，再画
+    // 媒体事件是异步派发的：这个 <video> 被换掉之后晚到的 pause / seeked / error 不许碰新的那个（停掉新视频的重画循环、往别的卡记位置、报假错）
+    const on = (ev: string, fn: () => void, opts?: AddEventListenerOptions) => v.addEventListener(ev, () => { if (this._video === v) fn(); }, opts);
+    on("loadedmetadata", () => { if (t0 > 0) v.currentTime = Math.min(t0, Number.isFinite(v.duration) ? v.duration : t0); this._updateVideoLayer(); }, { once: true });
+    on("loadeddata", () => {   // 第一帧到了：没看过的卡先按窗适应一次，再画
       if (this._deck.current?.id === c.id) { if (!this._deck.current.vp) this.fitToPanelSilent(); this._invalidate(); }
       this._updateVideoLayer();
     });
-    for (const ev of ["play", "pause", "ended", "timeupdate", "durationchange"]) v.addEventListener(ev, () => this._updateVideoLayer());
-    v.addEventListener("seeking", () => { this._vFrameTime = null; });
-    v.addEventListener("seeked", () => { this._saveVideoPos(); this._invalidate(); this._updateVideoLayer(); });
-    v.addEventListener("play", () => this._startVideoLoop(v));
-    v.addEventListener("pause", () => { this._saveVideoPos(); this._stopVideoLoop(); });
-    v.addEventListener("ended", () => { this._cancelStep(); this._stopVideoLoop(); this._saveVideoPos(); });
-    v.addEventListener("error", () => this._emit("notice", { level: "error", code: "decode-failed", id: c.id, name: c.name, message: "video could not be decoded" }));
+    for (const ev of ["play", "pause", "ended", "timeupdate", "durationchange"]) on(ev, () => this._updateVideoLayer());
+    on("seeking", () => { this._vFrameTime = null; });
+    on("seeked", () => { this._saveVideoPos(); this._invalidate(); this._updateVideoLayer(); });
+    on("play", () => this._startVideoLoop(v));
+    on("pause", () => { this._saveVideoPos(); this._stopVideoLoop(); });
+    on("ended", () => { this._cancelStep(); this._stopVideoLoop(); this._saveVideoPos(); });
+    on("error", () => this._emit("notice", { level: "error", code: "decode-failed", id: c.id, name: c.name, message: "video could not be decoded" }));
     this.shadowRoot!.appendChild(v);
     this._video = v; this._videoOf = c.id;
     this._armFrameCallback(v);
@@ -993,6 +995,7 @@ export class WpReferenceWindow extends HTMLElement {
         this._linked.delete(c.id); this._linkMissing.delete(c.id);
         this._texts.delete(c.id);
         this._bitmaps.get(c.id)?.close?.(); this._bitmaps.delete(c.id);
+        if (this._videoOf === c.id) this._stopVideo();   // 0.5.0：链接视频卡内容变了 → 拿掉旧 <video>，取回新字节后重新装（不接着放旧的）
       }
     }
     this._syncFromDeck();
