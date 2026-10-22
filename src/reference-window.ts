@@ -28,6 +28,17 @@
 //   文字卡 = 只读、可选中、可滚动的一层 DOM（.text）：vp.scale = 字号倍率，vp.ty = 滚动位置；不走画布。
 //   链接卡 = bytes 为空但有 target 的非 live 卡：内容由宿主的 linkProvider(target, kind) 按需给（书里的某一页、
 //   某个图层…），只显示不存；宿主 deck.invalidate 就重取；给不出来 → 卡上如实写「内容不可用」。
+// ══ 0.5.0：视频卡（user 2026-09-30「视频一定需要支持按帧播放，按帧rewind怎么办呢」「我贪一下，打开一个anime，一帧帧照着画」；
+//   2026-10-21「音视频应该是当此有效」；Claude Fable 5.1 lane 7）══
+//   视频**画在同一块 canvas 上**（<video> 是合法的 drawImage 源）：平移 / 捏合 / 旋转 / 1:1 / 长按吸色全和图片卡一套，零新代码；
+//   <video> 本身藏在 shadow 里（1 px、clip-path 裁空，仍算「可见」——Safari 对不在画面里的 video 会停更帧）。卡上只多一条底部控制条：
+//   上一帧 / 播放 / 下一帧 / 进度 / 时间。**逐帧**：浏览器没有按帧 API，正解是——
+//   · 下一帧：知道帧长就 seek 到「这一帧的起点 + 1.5 帧」（落在下一帧正中，稳）；还不知道帧长时**静音播到下一帧就停**（requestVideoFrameCallback
+//     报出下一帧的 mediaTime → 暂停 → 精确 seek 回那一帧），顺手量出帧长；
+//   · 上一帧：seek 到「这一帧的起点 − 0.5 帧」（落在上一帧正中）；
+//   · 帧长 = 连续播放时相邻两帧 mediaTime 之差的最小值（帧掉了差会变大，取最小 = 真帧长），记进 Card.play.fps（视图态，不标脏），下次开盘直接用；
+//   · 没有 requestVideoFrameCallback 的浏览器（老 Firefox）：按 play.fps 或 24 估，时间栏如实不显示帧号。
+//   翻到别的卡 = 暂停（画面不在眼前；音频那套「不停」是给 BGM 的，不适用）；空格 = 播放 / 暂停，← → 、, . = 上一帧 / 下一帧（窗有焦点时）。
 
 import { pinchScaleRot, solveAnchorTranslation } from "./pointer-gesture.ts";
 import type { GestureViewport } from "./pointer-gesture.ts";
@@ -70,6 +81,8 @@ export interface RefLabels {
   ram?: string; ramMissing?: string;
   /** 0.4.1：＋ 菜单里的「收成小图标」；收起后那颗小图标的提示（点它恢复、拖它挪位置）。 */
   minimize?: string; restore?: string;
+  /** 0.5.0 视频卡：上一帧 / 下一帧钮的提示。 */
+  prevFrame?: string; nextFrame?: string;
 }
 /** 卡上写的大小（「3.2 MB」）。 */
 function fmtBytes(n: number): string { return n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`; }
@@ -124,6 +137,8 @@ export const REF_ICON_IDS = {
   earlier: "back", later: "forward", current: "check",
   // 0.4.0（2026-10-09）：音频卡的播放 / 暂停。图标库里现成的。
   play: "play", pause: "pause",
+  // 0.5.0（2026-10-21）：视频卡的上一帧 / 下一帧 = 图标库现成的 ⏮ ⏭（skip-prev / skip-next，20260821 入库）。没有新画。
+  prevFrame: "skip-prev", nextFrame: "skip-next",
 } as const;
 function iconMarkup(id: string): string {
   const sym = (typeof document !== "undefined") ? document.querySelector(`svg symbol[id="${id}"]`) : null;
@@ -254,7 +269,7 @@ canvas:active { cursor: grabbing; }
   box-sizing: border-box !important; width: 44px !important; height: 44px !important; min-width: 0 !important; min-height: 0 !important;
   border-radius: 50% !important; resize: none !important; background-color: color-mix(in srgb, var(--bg, #202124) 85%, transparent);
 }
-:host([minimized]) :is(canvas, .text, .audio, .empty, .move, .plus, .close, .grip, .chips) { display: none !important; }
+:host([minimized]) :is(canvas, .text, .audio, .video, .empty, .move, .plus, .close, .grip, .chips) { display: none !important; }
 .bubble { display: none; }
 :host([minimized]) .bubble {
   display: flex; position: absolute; inset: 0; z-index: 4; align-items: center; justify-content: center;
@@ -299,12 +314,26 @@ canvas:active { cursor: grabbing; }
 .audio .aseek { width: 100%; margin: 0; accent-color: var(--ink, #e8eaed); }
 .audio .atime { font-size: 12px; color: var(--ink-soft, #9aa0a6); font-variant-numeric: tabular-nums; }
 .audio.missing .aname { color: var(--ink-soft, #9aa0a6); font-style: italic; }
+/* 0.5.0 视频卡（2026-10-21）：画面走 canvas（和图片一套手势），这里只有一条底部控制条：上一帧 / 播放 / 下一帧 / 进度 / 时间。翻页条在底下时让出一排。 */
+.video { position: absolute; left: 4px; right: 4px; bottom: 4px; display: none; z-index: 2; align-items: center; gap: 2px; padding: 2px 6px; box-sizing: border-box; border-radius: 14px;
+  background: color-mix(in srgb, var(--bg, #202124) 72%, transparent); color: var(--ink, #e8eaed); font-size: 11px; transition: opacity 0.35s; }
+.video.shown { display: flex; }
+.video.paged { bottom: 28px; }
+.video button { flex: none; width: 24px; height: 24px; padding: 0; border: none; border-radius: 50%; background: transparent; color: inherit; cursor: pointer; display: grid; place-items: center; }
+.video button:hover { background: color-mix(in srgb, var(--ink, #e8eaed) 14%, transparent); }
+.video button:disabled { opacity: 0.35; cursor: default; }
+.video button svg { width: 16px; height: 16px; pointer-events: none; }
+.video .vseek { flex: 1; min-width: 24px; margin: 0 4px; accent-color: var(--ink, #e8eaed); }
+.video .vtime { flex: none; color: var(--ink-soft, #9aa0a6); font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* <video> 本尊：藏起来但不 display:none（WebKit 对不在画面里的 video 会停更帧 / 不发帧回调），画面由 canvas 画 */
+.vsrc { position: absolute; left: 0; top: 0; width: 1px; height: 1px; clip-path: inset(50%); pointer-events: none; }
 .empty ::slotted(*), .empty p { margin: 0; }
 :host(:focus) { box-shadow: var(--shadow, 0 8px 24px rgba(0, 0, 0, 0.4)), inset 0 0 0 2px color-mix(in srgb, var(--ink, #e8eaed) 45%, transparent); }   /* 有焦点 = 粘贴落这里：一圈细描边 */
 </style>
 <canvas></canvas>
 <div class="text" part="text" data-takes-focus></div>
 <div class="audio" part="audio"><button class="aplay" type="button"></button><div class="ainfo"><div class="aname"></div><input class="aseek" type="range" min="0" max="1000" step="1" value="0"><div class="atime"></div></div></div>
+<div class="video" part="video"><button class="vprev" type="button" title="Previous frame" aria-label="Previous frame">${iconMarkup(REF_ICON_IDS.prevFrame)}</button><button class="vplay" type="button"></button><button class="vnext" type="button" title="Next frame" aria-label="Next frame">${iconMarkup(REF_ICON_IDS.nextFrame)}</button><input class="vseek" type="range" min="0" max="1000" step="1" value="0"><div class="vtime"></div></div>
 <div class="empty"><slot name="empty"><p>＋ 导入参考</p></slot></div>
 <button class="move" part="move" type="button" title="Tap: minimize · drag: move" aria-label="Tap: minimize · drag: move"><span class="knob">${iconMarkup(REF_ICON_IDS.pip)}</span></button>
 <button class="plus" part="plus" type="button" aria-haspopup="true">${iconMarkup(REF_ICON_IDS.plus)}</button>
@@ -336,7 +365,7 @@ export class WpReferenceWindow extends HTMLElement {
   /** 拖把地板（宿主注入 = ui/floating-window 运行时量的「顶栏下缘」；缺省 60 = 旧常数，裸挂可用）。
    *  拖 / 恢复 / 视口钳制三条路都吃它——出血区规则只准一个出处（2026-09-02 C2）。 */
   topFloor = DRAG_TOP_FLOOR;
-  /** 0.4.0 音频卡的速度档（宿主注入，如 [1, 0.75, 0.5]；保音高）。null = 不给速度（库的缺省；user 2026-10-09「默认不开，moonsinger开」）。 */
+  /** 0.4.0 音频卡的速度档（宿主注入，如 [1, 0.75, 0.5]；保音高）。null = 不给速度（库的缺省；user 2026-10-09「默认不开，moonsinger开」）。0.5.0 起视频卡也用它。 */
   audioRates: readonly number[] | null = null;
   /** 底边地板（宿主注入 = 屏底被占掉的高度：app 内软键盘、iOS 键盘那一块……；缺省 0）。拖 / resize / 视口钳制都吃它——
    *  否则右下角的 resize 把手会被键盘盖住（user 2026-09-30「参考窗或者任何浮窗需要保证 move 和 resize 能点到」）。改了之后宿主调 reclamp()。 */
@@ -349,6 +378,13 @@ export class WpReferenceWindow extends HTMLElement {
   /** 0.4.0 音频卡：一个窗一个 <audio>，记着正在放哪张卡。翻到别的卡 / 关窗都不停（user「关窗的时候音乐不停」、2026-10-09「1. 不停」）。 */
   private _audio: HTMLAudioElement | null = null; private _audioOf: string | null = null; private _audioUrl: string | null = null;
   private _rate = 1;
+  /** 0.5.0 视频卡：一个窗一个 <video>（藏在 shadow 里，画面由 canvas 画）。 */
+  private _videoLayer: HTMLElement; private _vPlay: HTMLButtonElement; private _vPrev: HTMLButtonElement; private _vNext: HTMLButtonElement; private _vSeek: HTMLInputElement; private _vTime: HTMLElement;
+  private _video: HTMLVideoElement | null = null; private _videoOf: string | null = null; private _videoUrl: string | null = null;
+  private _vFrameTime: number | null = null;    // 现在画着的这一帧的 mediaTime（requestVideoFrameCallback 报的；seek 之后清空等下一帧）
+  private _vFrameDur: number | null = null;     // 量到 / 宿主给的帧长（秒）；null = 还不知道
+  private _vStepping: { from: number; restoreMuted: boolean; timer: ReturnType<typeof setTimeout> } | null = null;   // 「播到下一帧就停」进行中
+  private _vRaf: number | null = null;          // 播放时逐帧重画的循环
   private _emptyEl: HTMLElement;
   private _plusEl: HTMLButtonElement;
   private _menu: RefMenuHandle | null = null;     // 菜单句柄（开着才非 null）
@@ -410,8 +446,22 @@ export class WpReferenceWindow extends HTMLElement {
     this._aPlay.addEventListener("click", () => this.togglePlay());
     this._aSeek.addEventListener("input", () => { const a = this._audio; if (a && this._audioOf === this._deck.current?.id && Number.isFinite(a.duration)) { a.currentTime = (Number(this._aSeek.value) / 1000) * a.duration; this._updateAudioLayer(); } });
     this._aSeek.addEventListener("change", () => this._saveAudioPos());
-    // 空格 = 播放 / 暂停（窗有焦点、当前是音频卡时；文字卡 / 进度条自己的键照旧）
-    this.addEventListener("keydown", (e) => { if (e.key === " " && this._deck.current?.kind === "audio" && !(e.composedPath()[0] as Element)?.closest?.("input, .text")) { e.preventDefault(); e.stopPropagation(); this.togglePlay(); } });
+    // 0.5.0 视频卡的控制条
+    this._videoLayer = root.querySelector(".video")!;
+    this._vPlay = root.querySelector(".vplay")!; this._vPrev = root.querySelector(".vprev")!; this._vNext = root.querySelector(".vnext")!; this._vSeek = root.querySelector(".vseek")!; this._vTime = root.querySelector(".vtime")!;
+    this._vPlay.innerHTML = iconMarkup(REF_ICON_IDS.play);
+    this._vPlay.addEventListener("click", () => this.togglePlay());
+    this._vPrev.addEventListener("click", () => this.stepFrame(-1));
+    this._vNext.addEventListener("click", () => this.stepFrame(1));
+    this._vSeek.addEventListener("input", () => { const v = this._video; if (v && this._videoOf === this._deck.current?.id && Number.isFinite(v.duration)) { this._cancelStep(); v.currentTime = (Number(this._vSeek.value) / 1000) * v.duration; this._updateVideoLayer(); } });
+    // 空格 = 播放 / 暂停（窗有焦点、当前是音视频卡时；文字卡 / 进度条自己的键照旧）；视频卡另有 ← → 、, . = 上一帧 / 下一帧
+    this.addEventListener("keydown", (e) => {
+      const cur = this._deck.current;
+      if (!cur || (cur.kind !== "audio" && cur.kind !== "video") || (e.composedPath()[0] as Element)?.closest?.("input, .text")) return;
+      if (e.key === " ") { e.preventDefault(); e.stopPropagation(); this.togglePlay(); }
+      else if (cur.kind === "video" && (e.key === "ArrowRight" || e.key === ".")) { e.preventDefault(); e.stopPropagation(); this.stepFrame(1); }
+      else if (cur.kind === "video" && (e.key === "ArrowLeft" || e.key === ",")) { e.preventDefault(); e.stopPropagation(); this.stepFrame(-1); }
+    });
     this._emptyEl = root.querySelector(".empty")!;
     this._plusEl = root.querySelector(".plus")!;
     this._chipsEl = root.querySelector(".chips")!;
@@ -458,29 +508,156 @@ export class WpReferenceWindow extends HTMLElement {
     if (name === "open" && oldV !== newV && newV != null) this._afterShow();
   }
   close() { this.open = false; }   // 程序性关（不发事件）
-  /** 0.4.0 导入漏斗（deck/import.ts）：嗅种类 → 够大就问宿主（ask）→ 原样 / 压（宿主注入的 transcoder）/ 不要 → 进牌组；加进去了就开窗。
-   *  kinds 缺省 = 图片 / 文字 / 音频。结果（加了哪些、哪些没进、为什么）原样还给宿主，由宿主明说。 */
+  /** 0.4.0 导入漏斗（deck/import.ts）：嗅种类 → 够大就问宿主（ask）→ 原样 / 压（宿主注入的 transcoder）/ 只放内存 / 不要 → 进牌组；加进去了就开窗。
+   *  kinds 缺省 = 图片 / 文字 / 音频 / 视频（0.5.0 起含视频）。音频 / 视频默认只放内存（0.5.0；opts.defaultRam 可按种类改）。结果（加了哪些、哪些没进、为什么）原样还给宿主，由宿主明说。 */
   async importFiles(files: readonly Blob[], opts: Omit<RefImportOptions, "kinds"> & { kinds?: readonly string[] } = {}): Promise<RefImportResult> {
-    const r = await importIntoDeck(this._deck, files, { ...opts, kinds: opts.kinds ?? ["image", "text", "audio"] });
+    const r = await importIntoDeck(this._deck, files, { ...opts, kinds: opts.kinds ?? ["image", "text", "audio", "video"] });
     if (r.added.length || r.filled.length) this.open = true;
     return r;
   }
   /** 元素从文档里拿掉 = 停（关窗不停；整个窗没了才停）。 */
-  disconnectedCallback() { this._audio?.pause(); }
+  disconnectedCallback() { this._audio?.pause(); this._cancelStep(); this._video?.pause(); }
 
-  // ---- 0.4.0 音频卡 ----
-  /** 当前这张音频卡：播放 / 暂停（换了一张卡 = 先停上一张、从这张记着的位置放）。不是音频卡 = 什么都不做。 */
+  // ---- 0.4.0 音频卡 / 0.5.0 视频卡 ----
+  /** 当前这张音频 / 视频卡：播放 / 暂停（换了一张卡 = 先停上一张、从这张记着的位置放）。不是音视频卡 = 什么都不做。 */
   togglePlay(): void {
-    const cur = this._deck.current; if (!cur || cur.kind !== "audio") return;
+    const cur = this._deck.current; if (!cur || (cur.kind !== "audio" && cur.kind !== "video")) return;
     const bytes = cur.bytes ?? this._linked.get(cur.id) ?? null; if (!bytes) return;
+    const fail = (e: unknown) => this._emit("notice", { level: "error", code: "decode-failed", id: cur.id, name: cur.name, message: String((e as { message?: unknown })?.message ?? e) });
+    if (cur.kind === "video") {
+      if (this._videoOf !== cur.id) this._loadVideo(cur, bytes);
+      this._cancelStep();
+      const v = this._video!;
+      if (v.paused || v.ended) v.play().catch(fail); else v.pause();
+      this._updateVideoLayer();
+      return;
+    }
     if (this._audioOf !== cur.id) this._loadAudio(cur, bytes);
     const a = this._audio!;
-    if (a.paused) a.play().catch((e: unknown) => this._emit("notice", { level: "error", code: "decode-failed", id: cur.id, name: cur.name, message: String((e as { message?: unknown })?.message ?? e) }));
+    if (a.paused) a.play().catch(fail);
     else a.pause();
     this._updateAudioLayer();
   }
-  /** 正在放（任何一张音频卡）。 */
-  get playing(): boolean { return !!this._audio && !this._audio.paused; }
+  /** 正在放（任何一张音频卡，或当前这张视频卡；逐帧时那一下短暂的静音播放不算）。 */
+  get playing(): boolean { return (!!this._audio && !this._audio.paused) || (!!this._video && !this._video.paused && !this._video.ended && !this._vStepping); }
+
+  // ---- 0.5.0 视频卡 ----
+  /** 当前这张视频卡：上一帧（-1）/ 下一帧（+1）。放着的先暂停。不是视频卡 = 什么都不做。做法见文件头「0.5.0」。 */
+  stepFrame(delta: -1 | 1): void {
+    const cur = this._deck.current; if (!cur || cur.kind !== "video") return;
+    const bytes = cur.bytes ?? this._linked.get(cur.id) ?? null; if (!bytes) return;
+    if (this._videoOf !== cur.id) this._loadVideo(cur, bytes);
+    const v = this._video!;
+    if (this._vStepping) return;                      // 上一步还没落定
+    if (!v.paused) v.pause();
+    const base = this._vFrameTime ?? v.currentTime;   // 这一帧的起点（有帧回调就是精确的；没有就是 currentTime）
+    const d = this._vFrameDur;
+    if (delta > 0) {
+      if (d != null) this._seekVideo(base + 1.5 * d);
+      else if (typeof (v as HTMLVideoElement & { requestVideoFrameCallback?: unknown }).requestVideoFrameCallback === "function") {
+        // 还不知道帧长：静音播到下一帧就停（_onVideoFrame 收尾）；300 ms 没等到帧（到尾了 / 解不出）就在原地停下
+        const timer = setTimeout(() => { if (this._vStepping?.timer === timer) { const st = this._vStepping; this._vStepping = null; v.pause(); v.muted = st.restoreMuted; this._updateVideoLayer(); } }, 300);
+        this._vStepping = { from: base, restoreMuted: v.muted, timer };
+        v.muted = true;
+        v.play().catch(() => { this._cancelStep(); });
+      } else this._seekVideo(v.currentTime + 1 / (cur.play?.fps ?? 24));
+    } else {
+      this._seekVideo(Math.max(0, base - 0.5 * (d ?? 1 / (cur.play?.fps ?? 24))));
+    }
+    this._updateVideoLayer();
+  }
+  private _seekVideo(t: number) {
+    const v = this._video; if (!v) return;
+    v.currentTime = Number.isFinite(v.duration) ? Math.max(0, Math.min(v.duration, t)) : Math.max(0, t);
+  }
+  private _cancelStep() {
+    const st = this._vStepping; if (!st) return;
+    this._vStepping = null; clearTimeout(st.timer);
+    const v = this._video; if (v) { v.pause(); v.muted = st.restoreMuted; }
+  }
+  /** requestVideoFrameCallback：新画了一帧。记帧的起点、量帧长、收「播到下一帧就停」的尾。 */
+  private _onVideoFrame(v: HTMLVideoElement, mediaTime: number) {
+    const prev = this._vFrameTime; this._vFrameTime = mediaTime;
+    if (prev != null && !v.seeking) {   // 连续播放时相邻两帧之差；取最小 = 真帧长（掉帧只会让差变大）
+      const d = mediaTime - prev;
+      if (d > 1 / 240 && d < 1 && (this._vFrameDur == null || d < this._vFrameDur - 1e-6)) { this._vFrameDur = d; this._saveVideoPos(); }
+    }
+    const st = this._vStepping;
+    if (st && mediaTime > st.from + 1e-6) {   // 到下一帧了：停、精确停在这一帧
+      this._vStepping = null; clearTimeout(st.timer);
+      v.pause(); v.muted = st.restoreMuted;
+      if (Math.abs(v.currentTime - mediaTime) > 1e-4) v.currentTime = mediaTime;
+    }
+    this._invalidate(); this._updateVideoLayer();
+  }
+  private _armFrameCallback(v: HTMLVideoElement) {
+    const rvfc = (v as HTMLVideoElement & { requestVideoFrameCallback?: (cb: (now: number, meta: { mediaTime: number }) => void) => number }).requestVideoFrameCallback;
+    if (typeof rvfc !== "function") return;
+    rvfc.call(v, (_now, meta) => { if (this._video !== v) return; this._onVideoFrame(v, meta.mediaTime); this._armFrameCallback(v); });
+  }
+  private _loadVideo(c: Card, bytes: Blob) {
+    this._stopVideo();
+    const v = document.createElement("video"), t0 = c.play?.t ?? 0;
+    v.className = "vsrc"; v.playsInline = true; v.preload = "auto"; v.loop = !!c.play?.loop; v.playbackRate = this._rate;
+    (v as HTMLVideoElement & { preservesPitch?: boolean }).preservesPitch = true;
+    this._videoUrl = URL.createObjectURL(bytes); v.src = this._videoUrl;
+    this._vFrameDur = c.play?.fps ? 1 / c.play.fps : null; this._vFrameTime = null;
+    v.addEventListener("loadedmetadata", () => { if (t0 > 0) v.currentTime = Math.min(t0, Number.isFinite(v.duration) ? v.duration : t0); this._updateVideoLayer(); }, { once: true });
+    v.addEventListener("loadeddata", () => {   // 第一帧到了：没看过的卡先按窗适应一次，再画
+      if (this._deck.current?.id === c.id) { if (!this._deck.current.vp) this.fitToPanelSilent(); this._invalidate(); }
+      this._updateVideoLayer();
+    });
+    for (const ev of ["play", "pause", "ended", "timeupdate", "durationchange"]) v.addEventListener(ev, () => this._updateVideoLayer());
+    v.addEventListener("seeking", () => { this._vFrameTime = null; });
+    v.addEventListener("seeked", () => { this._saveVideoPos(); this._invalidate(); this._updateVideoLayer(); });
+    v.addEventListener("play", () => this._startVideoLoop(v));
+    v.addEventListener("pause", () => { this._saveVideoPos(); this._stopVideoLoop(); });
+    v.addEventListener("ended", () => { this._cancelStep(); this._stopVideoLoop(); this._saveVideoPos(); });
+    v.addEventListener("error", () => this._emit("notice", { level: "error", code: "decode-failed", id: c.id, name: c.name, message: "video could not be decoded" }));
+    this.shadowRoot!.appendChild(v);
+    this._video = v; this._videoOf = c.id;
+    this._armFrameCallback(v);
+  }
+  private _stopVideo() {
+    this._cancelStep(); this._stopVideoLoop();
+    if (this._video) { this._saveVideoPos(); this._video.pause(); this._video.removeAttribute("src"); this._video.load(); this._video.remove(); }
+    if (this._videoUrl) URL.revokeObjectURL(this._videoUrl);
+    this._video = null; this._videoOf = null; this._videoUrl = null; this._vFrameTime = null; this._vFrameDur = null;
+  }
+  /** 播放中逐帧重画（有没有帧回调都画——帧回调只管精确计时）。 */
+  private _startVideoLoop(v: HTMLVideoElement) {
+    if (this._vRaf != null) return;
+    const tick = () => { this._vRaf = null; if (this._video !== v || v.paused || v.ended) return; this._render(); this._updateVideoLayer(); this._vRaf = requestAnimationFrame(tick); };
+    this._vRaf = requestAnimationFrame(tick);
+  }
+  private _stopVideoLoop() { if (this._vRaf != null) { cancelAnimationFrame(this._vRaf); this._vRaf = null; } }
+  /** 放到哪 / 循环 / 帧率记进卡（视图态：牌组发 view，不标脏）。 */
+  private _saveVideoPos() {
+    const v = this._video, id = this._videoOf; if (!v || !id || this._deck.indexOf(id) < 0) return;
+    const fps = this._vFrameDur ? Math.round((1 / this._vFrameDur) * 1000) / 1000 : undefined;
+    this._deck.setPlay(id, { t: Math.round(v.currentTime * 1000) / 1000, loop: v.loop, ...(fps ? { fps } : {}) });
+  }
+  private _updateVideoLayer() {
+    const cur = this._deck.current, isVideo = cur?.kind === "video";
+    const v = this._video;
+    if (v && (!isVideo || this._videoOf !== cur!.id)) { this._cancelStep(); if (!v.paused) v.pause(); }   // 翻到别的卡 = 暂停
+    const bytes = isVideo && cur ? (cur.bytes ?? this._linked.get(cur.id) ?? null) : null;
+    const shown = !!bytes;
+    this._videoLayer.classList.toggle("shown", shown);
+    if (!shown || !cur) return;
+    if (this._videoOf !== cur.id) this._loadVideo(cur, bytes!);
+    const vv = this._video!, playing = !vv.paused && !vv.ended && !this._vStepping;
+    const want = playing ? REF_ICON_IDS.pause : REF_ICON_IDS.play;
+    if (this._vPlay.dataset.icon !== want) { this._vPlay.innerHTML = iconMarkup(want); this._vPlay.dataset.icon = want; }
+    this._vPlay.setAttribute("aria-label", playing ? (this._labels.pause ?? "Pause") : (this._labels.play ?? "Play"));
+    this._videoLayer.classList.toggle("paged", this._deck.size >= 2);
+    const dur = Number.isFinite(vv.duration) ? vv.duration : null, t = vv.currentTime, d = this._vFrameDur;
+    this._vSeek.disabled = !dur; this._vSeek.value = String(dur ? Math.round((t / dur) * 1000) : 0);
+    this._vPrev.disabled = this._vNext.disabled = !!this._vStepping;
+    const fmt = (x: number) => `${Math.floor(x / 60)}:${String(Math.floor(x % 60)).padStart(2, "0")}.${Math.floor((x % 1) * 10)}`;
+    const text = `${fmt(t)}${dur ? ` / ${fmt(dur)}` : ""}${d ? ` · #${Math.round((this._vFrameTime ?? t) / d)}` : ""}${vv.playbackRate !== 1 ? ` · ${vv.playbackRate}×` : ""}${cur.play?.loop ? ` · ${this._labels.loop ?? "loop"}` : ""}`;
+    if (this._vTime.textContent !== text) this._vTime.textContent = text;
+  }
   private _loadAudio(c: Card, bytes: Blob) {
     this._stopAudio();
     const a = new Audio(), t0 = c.play?.t ?? 0;
@@ -576,6 +753,7 @@ export class WpReferenceWindow extends HTMLElement {
     setTitle("[data-jump]", l.jump);
     setTitle(".grip", l.resize, l.resizeAria);
     setTitle(".bubble", l.restore);   // 0.4.2：收起后的小图标（0.4.1 漏挂了；没给 = 模板里的英文默认）
+    setTitle(".vprev", l.prevFrame); setTitle(".vnext", l.nextFrame);   // 0.5.0 视频卡
   }
 
   // ---- 多参考内容 API（宿主灌注；程序性，不发事件）----
@@ -802,6 +980,7 @@ export class WpReferenceWindow extends HTMLElement {
     for (const bm of this._bitmaps.values()) bm.close?.();
     this._bitmaps.clear();
     this._texts.clear(); this._linked.clear(); this._linkMissing.clear();
+    this._stopVideo();   // 整副牌换了：视频跟着卡走
   }
   /** 别人（宿主直接用 .deck、或共用这副牌的另一个视图）改了牌组。 */
   private _onDeckChange(what: DeckChange) {
@@ -826,6 +1005,7 @@ export class WpReferenceWindow extends HTMLElement {
     for (const m of [this._texts, this._linked] as Map<string, unknown>[]) for (const id of [...m.keys()]) if (this._deck.indexOf(id) < 0) m.delete(id);
     for (const id of [...this._linkMissing]) if (this._deck.indexOf(id) < 0) this._linkMissing.delete(id);
     if (this._audioOf && this._deck.indexOf(this._audioOf) < 0) this._stopAudio();   // 正在放的那张被删了 = 停
+    if (this._videoOf && this._deck.indexOf(this._videoOf) < 0) this._stopVideo();
     for (const c of this._deck.cards()) {
       if (c.kind === "live") continue;
       const bytes = c.bytes ?? this._linked.get(c.id) ?? null;
@@ -898,6 +1078,7 @@ export class WpReferenceWindow extends HTMLElement {
     this._updateChips();
     this._updateTextLayer();
     this._updateAudioLayer();
+    this._updateVideoLayer();
     this._invalidate();
   }
   /** 文字卡：内容层显示 / 隐藏 + 灌内容 + 字号 + 滚动位置。 */
@@ -936,6 +1117,10 @@ export class WpReferenceWindow extends HTMLElement {
       this._dropLiveIfOther(cur);
       if (!this._liveSource && this.liveProvider) this._takeLiveFrame(cur);
       return this._liveSource ? this._liveSize : null;
+    }
+    if (cur.kind === "video") {
+      const v = this._video;
+      return v && this._videoOf === cur.id && v.videoWidth > 0 ? { w: v.videoWidth, h: v.videoHeight } : null;   // 还没到第一帧 → 暂时没有尺寸
     }
     const bm = this._bitmaps.get(cur.id);
     return bm ? { w: bm.width, h: bm.height } : null;   // 还在解 → 暂时没有尺寸
@@ -1161,8 +1346,8 @@ export class WpReferenceWindow extends HTMLElement {
       // 宿主出画面的卡：宿主没给 provider 就不列（写作 app 没有画布可镜像）；多台相机的宿主经 liveTargets 列多项
       ...this._liveMenuItems(),
       { id: "onetoone", label: l.oneToOne ?? "1:1",      icon: REF_ICON_IDS.oneToOne, hidden: this._deck.current?.kind === "audio" },
-      // 0.4.0 音频卡：循环（ROUND 的设想：放在 ＋ 菜单）；速度只在宿主给了档位时列（user 2026-10-09「默认不开，moonsinger开」）。点了不关，可以连点
-      ...(this._deck.current?.kind === "audio" ? this._audioMenuItems() : []),
+      // 0.4.0 音频卡（0.5.0 视频卡同）：循环（ROUND 的设想：放在 ＋ 菜单）；速度只在宿主给了档位时列（user 2026-10-09「默认不开，moonsinger开」）。点了不关，可以连点
+      ...(cur?.kind === "audio" || cur?.kind === "video" ? this._audioMenuItems() : []),
       // 只放内存（user 2026-10-09「然后能不能加RAM only，就是不落盘，每次重新上传」）：有自己字节的卡才有（链接卡 / 宿主画面 / 读回来的空位没有）
       { id: "minimize", label: l.minimize ?? "Minimize to icon", icon: REF_ICON_IDS.pip, separatorBefore: true },
       { id: "ram", label: l.ram ?? "Keep in memory only (not saved)", ...(cur?.ram ? { icon: REF_ICON_IDS.current } : {}),
@@ -1243,8 +1428,10 @@ export class WpReferenceWindow extends HTMLElement {
           const cur = this._deck.current; if (!cur) return;
           const loop = !cur.play?.loop;
           if (this._audio && this._audioOf === cur.id) this._audio.loop = loop;
-          this._deck.setPlay(cur.id, { t: this._audio && this._audioOf === cur.id ? this._audio.currentTime : (cur.play?.t ?? 0), loop });
-          this._updateAudioLayer(); return "keep";
+          if (this._video && this._videoOf === cur.id) this._video.loop = loop;
+          const media = this._audioOf === cur.id ? this._audio : this._videoOf === cur.id ? this._video : null;
+          this._deck.setPlay(cur.id, { t: media ? media.currentTime : (cur.play?.t ?? 0), loop, ...(cur.play?.fps ? { fps: cur.play.fps } : {}) });
+          this._updateAudioLayer(); this._updateVideoLayer(); return "keep";
         }
         if (id === "ram") {
           const cur = this._deck.current; if (cur) this._deck.setRam(cur.id, !cur.ram);
@@ -1253,7 +1440,8 @@ export class WpReferenceWindow extends HTMLElement {
         if (id.startsWith("rate:")) {
           this._rate = Number(id.slice(5)) || 1;
           if (this._audio) this._audio.playbackRate = this._rate;
-          this._updateAudioLayer(); return "keep";
+          if (this._video) this._video.playbackRate = this._rate;
+          this._updateAudioLayer(); this._updateVideoLayer(); return "keep";
         }
         if (id === "load") this._emit("requestload");
         else if (id === "paste") this._emit("requestpaste");
@@ -1493,10 +1681,13 @@ export class WpReferenceWindow extends HTMLElement {
     const ctx = this._cctx;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, W, H);
-    let source: RefBitmapSource | RefLiveSource | null = null;
+    let source: RefBitmapSource | RefLiveSource | HTMLVideoElement | null = null;
     if (cur?.kind === "live") {
       if (!this._liveSource) this._recomposeLive();   // 首帧（节流窗自己排 timer 补）
       source = this._liveSource;
+    } else if (cur?.kind === "video") {
+      const v = this._video;
+      source = v && this._videoOf === cur.id && v.readyState >= 2 && v.videoWidth > 0 ? v : null;   // HAVE_CURRENT_DATA：手上有一帧才画
     } else if (cur) source = this._bitmaps.get(cur.id) ?? null;
     if (!source) return;
     // 底不 canvas 自画：clearRect 透底，:host 的 void+点阵 CSS 从图外与图的透明部分透出（对齐 editor）。
@@ -1512,8 +1703,10 @@ export class WpReferenceWindow extends HTMLElement {
       -v.scale * s * dpr, v.scale * c * dpr,
       v.tx * dpr, v.ty * dpr,
     );
-    // 宿主出的帧可能比这张卡「本来的大小」小（按提示出了小尺寸）→ 拉伸到本来的大小画；图片卡两者相等。
-    const size = cur?.kind === "live" && this._liveSize ? this._liveSize : { w: source.width, h: source.height };
+    // 宿主出的帧可能比这张卡「本来的大小」小（按提示出了小尺寸）→ 拉伸到本来的大小画；图片卡两者相等；视频按画面像素（videoWidth，不是元素的 width）。
+    const size = cur?.kind === "live" && this._liveSize ? this._liveSize
+      : source instanceof HTMLVideoElement ? { w: source.videoWidth, h: source.videoHeight }
+      : { w: source.width, h: source.height };
     ctx.drawImage(source as CanvasImageSource, -size.w / 2, -size.h / 2, size.w, size.h);
   }
 

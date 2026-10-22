@@ -9,8 +9,8 @@
 
 /** 每张卡自己的视图状态。图片：平移 / 缩放 / 旋转。文字：scale = 字号倍率，ty = 滚动位置。 */
 export interface CardView { tx: number; ty: number; scale: number; rot: number }
-/** 音视频的播放位置。 */
-export interface CardPlay { t: number; loop: boolean }
+/** 音视频的播放位置。fps（0.5.0，视频卡）= 量到 / 宿主给的帧率，逐帧后退按它算一帧多长；没有 = 还没量到（第一次「下一帧」会播到下一帧再停，顺手量出来）。 */
+export interface CardPlay { t: number; loop: boolean; fps?: number }
 
 /** 卡片种类是开放集。库自带的种类名见各 kinds 入口；宿主可以登记自己的。 */
 export type CardKind = string;
@@ -33,6 +33,9 @@ export interface Card {
   /** 0.4.0「只放内存」（RAM only）：字节不随文档保存，只记原文件多大；下次打开是一个空位，提示重新导入、补回原位。null = 照常存。
    *  2026-10-09 user「然后能不能加RAM only，就是不落盘，每次重新上传，这个非常有用！！！」→ 选了「B」（存一个空位）——翻掉 2026-09-29 去掉「只在这次有效」的决定。 */
   ram: { bytes: number } | null;
+  /** 0.5.0 清单纪律（家族根 ai-docs/20261021-format-version-discipline.md §3「直通」）：清单条目里本库不认识的键（更新版本的库写的、或宿主自己塞的）
+   *  原样带着、保存时原样写回；已知键永远赢。null = 没有。 */
+  extra: Record<string, unknown> | null;
 }
 
 /** 新卡：只有 kind 必填，其余缺省为空。 */
@@ -52,12 +55,15 @@ export interface DeckSnapshot {
   index: number;
   cards: Card[];
   carried: CarriedItem[];
+  /** 0.5.0：清单顶层本库不认识的键（更新版本的库写的），原样带着、保存时原样写回。没有 = {}。 */
+  extra: Record<string, unknown>;
 }
 /** restore 的入参：卡可以不带 id（载入时本来就没有）。 */
 export interface DeckRestore {
   index?: number;
   cards: readonly NewCard[];
   carried?: readonly CarriedItem[];
+  extra?: Record<string, unknown>;
 }
 
 export type DeckChange =
@@ -107,7 +113,12 @@ function cloneView(v: CardView | null | undefined): CardView | null {
 }
 function clonePlay(p: CardPlay | null | undefined): CardPlay | null {
   if (!p || !Number.isFinite(p.t)) return null;
-  return { t: p.t, loop: !!p.loop };
+  const fps = typeof p.fps === "number" && Number.isFinite(p.fps) && p.fps > 0 ? p.fps : undefined;
+  return fps !== undefined ? { t: p.t, loop: !!p.loop, fps } : { t: p.t, loop: !!p.loop };
+}
+function cloneExtra(x: Record<string, unknown> | null | undefined): Record<string, unknown> | null {
+  if (!x || typeof x !== "object" || Array.isArray(x) || Object.keys(x).length === 0) return null;
+  return JSON.parse(JSON.stringify(x)) as Record<string, unknown>;
 }
 function cloneCarried(c: CarriedItem): CarriedItem {
   return { at: c.at, item: JSON.parse(JSON.stringify(c.item)) as Record<string, unknown>, files: { ...c.files } };
@@ -121,6 +132,7 @@ function clampIndex(i: number, n: number): number {
 export function createDeck(): Deck {
   let cards: Card[] = [];
   let carried: CarriedItem[] = [];
+  let extra: Record<string, unknown> = {};
   let index = 0;
   let seq = 0;
   const listeners = new Set<(what: DeckChange) => void>();
@@ -144,8 +156,9 @@ export function createDeck(): Deck {
     play: clonePlay(c.play),
     origin: c.origin ?? null,
     ram: c.ram && Number.isFinite(c.ram.bytes) ? { bytes: c.ram.bytes } : null,
+    extra: cloneExtra(c.extra),
   });
-  const copy = (c: Card): Card => ({ ...c, vp: cloneView(c.vp), play: clonePlay(c.play), ram: c.ram ? { bytes: c.ram.bytes } : null });
+  const copy = (c: Card): Card => ({ ...c, vp: cloneView(c.vp), play: clonePlay(c.play), ram: c.ram ? { bytes: c.ram.bytes } : null, extra: cloneExtra(c.extra) });
 
   const deck: Deck = {
     get size() { return cards.length; },
@@ -155,7 +168,7 @@ export function createDeck(): Deck {
     get: (id) => cards.find((c) => c.id === id) ?? null,
     indexOf: (id) => cards.findIndex((c) => c.id === id),
 
-    snapshot: () => ({ index, cards: cards.map(copy), carried: carried.map(cloneCarried) }),
+    snapshot: () => ({ index, cards: cards.map(copy), carried: carried.map(cloneCarried), extra: cloneExtra(extra) ?? {} }),
 
     restore(s) {
       if (!s || !Array.isArray(s.cards)) throw new TypeError("Deck.restore expects { cards: [...] }");
@@ -164,13 +177,14 @@ export function createDeck(): Deck {
         return make(c);
       });
       carried = (s.carried ?? []).map(cloneCarried);
+      extra = cloneExtra(s.extra) ?? {};
       index = clampIndex(s.index ?? 0, cards.length);
       emit({ type: "reset" });
       return cards.map((c) => c.id);
     },
 
     clear() {
-      cards = []; carried = []; index = 0;
+      cards = []; carried = []; extra = {}; index = 0;
       emit({ type: "reset" });
     },
 
@@ -226,7 +240,7 @@ export function createDeck(): Deck {
       const c = deck.get(id);
       const p = clonePlay(play);
       if (!c || !p) return;
-      if (c.play && c.play.t === p.t && c.play.loop === p.loop) return;
+      if (c.play && c.play.t === p.t && c.play.loop === p.loop && c.play.fps === p.fps) return;
       c.play = p;
       emit({ type: "view" });
     },

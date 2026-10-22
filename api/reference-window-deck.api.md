@@ -7,6 +7,7 @@
 // @public (undocumented)
 export interface Card {
     bytes: Blob | null;
+    extra: Record<string, unknown> | null;
     readonly id: string;
     // (undocumented)
     kind: CardKind;
@@ -29,6 +30,8 @@ export type CardKind = string;
 
 // @public
 export interface CardPlay {
+    // (undocumented)
+    fps?: number;
     // (undocumented)
     loop: boolean;
     // (undocumented)
@@ -55,6 +58,9 @@ export interface CarriedItem {
     };
     item: Record<string, unknown>;
 }
+
+// @public (undocumented)
+export function compareDeckStamp(file: DeckStamp, mine?: DeckStamp): DeckManifestVerdict;
 
 // @public (undocumented)
 export function createDeck(): Deck;
@@ -102,7 +108,10 @@ export interface Deck {
 export const DECK_MANIFEST_NAME = "manifest.json";
 
 // @public (undocumented)
-export const DECK_MANIFEST_VERSION = 1;
+export const DECK_MANIFEST_STAMP: Readonly<DeckStamp>;
+
+// @public
+export const DECK_MANIFEST_VERSION: number;
 
 // @public (undocumented)
 export type DeckChange =
@@ -127,12 +136,18 @@ export type DeckChange =
 // @public
 export function deckDir(app: string): string;
 
-// @public (undocumented)
+// @public
 export interface DeckManifest {
+    // (undocumented)
+    extra: Record<string, unknown>;
     // (undocumented)
     index: number;
     // (undocumented)
     items: ManifestItem[];
+    // (undocumented)
+    minor: number;
+    // (undocumented)
+    patch: number;
     // (undocumented)
     version: number;
 }
@@ -147,11 +162,16 @@ export class DeckManifestTooNewError extends Error {
 }
 
 // @public
+export type DeckManifestVerdict = "same" | "older" | "newer-minor" | "newer-patch";
+
+// @public
 export interface DeckRestore {
     // (undocumented)
     cards: readonly NewCard[];
     // (undocumented)
     carried?: readonly CarriedItem[];
+    // (undocumented)
+    extra?: Record<string, unknown>;
     // (undocumented)
     index?: number;
 }
@@ -162,8 +182,19 @@ export interface DeckSnapshot {
     cards: Card[];
     // (undocumented)
     carried: CarriedItem[];
+    extra: Record<string, unknown>;
     // (undocumented)
     index: number;
+}
+
+// @public (undocumented)
+export interface DeckStamp {
+    // (undocumented)
+    major: number;
+    // (undocumented)
+    minor: number;
+    // (undocumented)
+    patch: number;
 }
 
 // @public
@@ -173,7 +204,13 @@ export interface DecodedDeck {
     // (undocumented)
     carried: CarriedItem[];
     // (undocumented)
+    extra: Record<string, unknown>;
+    // (undocumented)
     index: number;
+    // (undocumented)
+    stamp: DeckStamp;
+    // (undocumented)
+    verdict: DeckManifestVerdict;
 }
 
 // @public
@@ -189,6 +226,9 @@ export interface DecodeOptions {
     getFile: (path: string) => Blob | null;
     knownKinds: readonly string[];
 }
+
+// @public
+export const DEFAULT_RAM: Readonly<Record<RefImportKind, boolean>>;
 
 // @public
 export function encodeDeck(s: DeckSnapshot, o: EncodeOptions): Map<string, Blob>;
@@ -242,6 +282,9 @@ export type NewCard = {
 } & Partial<Omit<Card, "id" | "kind">>;
 
 // @public
+export function readDeckStamp(json: unknown): DeckStamp;
+
+// @public
 export type RefImportChoice = "keep" | "compress" | "ram" | "cancel";
 
 // @public (undocumented)
@@ -252,6 +295,7 @@ export interface RefImportOptions {
     // (undocumented)
     ask?: ((q: RefImportQuestion) => Promise<RefImportChoice>) | null;
     askAbove?: Partial<Record<RefImportKind, number>>;
+    defaultRam?: Partial<Record<RefImportKind, boolean>>;
     kinds: readonly string[];
     ramAbove?: number;
     // (undocumented)

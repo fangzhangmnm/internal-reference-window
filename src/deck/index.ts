@@ -8,7 +8,9 @@ export type {
 export {
   decodeDeck, decodeDeckFromJson, encodeDeck, migrateDeckManifest, deckDir, extForMime, mimeForName,
   DeckManifestTooNewError, DECK_MANIFEST_VERSION, DECK_MANIFEST_NAME,
+  // 0.5.0 清单拍子（major.minor.patch；家族格式版本纪律）
+  DECK_MANIFEST_STAMP, readDeckStamp, compareDeckStamp,
 } from "./manifest.ts";
-export type { DecodedDeck, DecodeOptions, DeckManifest, EncodeOptions, ManifestItem } from "./manifest.ts";
-export { importIntoDeck, sniffKind } from "./import.ts";
+export type { DecodedDeck, DecodeOptions, DeckManifest, EncodeOptions, ManifestItem, DeckStamp, DeckManifestVerdict } from "./manifest.ts";
+export { importIntoDeck, sniffKind, DEFAULT_RAM } from "./import.ts";
 export type { RefImportKind, RefTranscoder, RefImportQuestion, RefImportChoice, RefImportOptions, RefImportSkip, RefImportResult } from "./import.ts";

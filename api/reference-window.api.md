@@ -7,6 +7,7 @@
 // @public (undocumented)
 export interface Card {
     bytes: Blob | null;
+    extra: Record<string, unknown> | null;
     readonly id: string;
     // (undocumented)
     kind: CardKind;
@@ -29,6 +30,8 @@ export type CardKind = string;
 
 // @public
 export interface CardPlay {
+    // (undocumented)
+    fps?: number;
     // (undocumented)
     loop: boolean;
     // (undocumented)
@@ -122,6 +125,8 @@ export interface DeckRestore {
     // (undocumented)
     carried?: readonly CarriedItem[];
     // (undocumented)
+    extra?: Record<string, unknown>;
+    // (undocumented)
     index?: number;
 }
 
@@ -131,6 +136,7 @@ export interface DeckSnapshot {
     cards: Card[];
     // (undocumented)
     carried: CarriedItem[];
+    extra: Record<string, unknown>;
     // (undocumented)
     index: number;
 }
@@ -157,6 +163,8 @@ export const REF_ICON_IDS: {
     readonly current: "check";
     readonly play: "play";
     readonly pause: "pause";
+    readonly prevFrame: "skip-prev";
+    readonly nextFrame: "skip-next";
 };
 
 // @public (undocumented)
@@ -175,6 +183,7 @@ export interface RefImportOptions {
     // (undocumented)
     ask?: ((q: RefImportQuestion) => Promise<RefImportChoice>) | null;
     askAbove?: Partial<Record<RefImportKind, number>>;
+    defaultRam?: Partial<Record<RefImportKind, boolean>>;
     kinds: readonly string[];
     ramAbove?: number;
     // (undocumented)
@@ -260,6 +269,8 @@ export interface RefLabels {
     // (undocumented)
     next?: string;
     // (undocumented)
+    nextFrame?: string;
+    // (undocumented)
     oneToOne?: string;
     // (undocumented)
     paste?: string;
@@ -267,6 +278,7 @@ export interface RefLabels {
     pause?: string;
     play?: string;
     prev?: string;
+    prevFrame?: string;
     ram?: string;
     // (undocumented)
     ramMissing?: string;
@@ -469,6 +481,7 @@ export class WpReferenceWindow extends HTMLElement {
     set rect(o: Partial<RefPanelRect> | null | undefined);
     setItems(items: RefItem[], index?: number): void;
     showLive(target?: string | null, name?: string): void;
+    stepFrame(delta: -1 | 1): void;
     togglePlay(): void;
     topFloor: number;
     // (undocumented)

@@ -18,15 +18,19 @@ export declare interface Card {
     ram: {
         bytes: number;
     } | null;
+    /** 0.5.0 清单纪律（家族根 ai-docs/20261021-format-version-discipline.md §3「直通」）：清单条目里本库不认识的键（更新版本的库写的、或宿主自己塞的）
+     *  原样带着、保存时原样写回；已知键永远赢。null = 没有。 */
+    extra: Record<string, unknown> | null;
 }
 
 /** 卡片种类是开放集。库自带的种类名见各 kinds 入口；宿主可以登记自己的。 */
 export declare type CardKind = string;
 
-/** 音视频的播放位置。 */
+/** 音视频的播放位置。fps（0.5.0，视频卡）= 量到 / 宿主给的帧率，逐帧后退按它算一帧多长；没有 = 还没量到（第一次「下一帧」会播到下一帧再停，顺手量出来）。 */
 export declare interface CardPlay {
     t: number;
     loop: boolean;
+    fps?: number;
 }
 
 /** 每张卡自己的视图状态。图片：平移 / 缩放 / 旋转。文字：scale = 字号倍率，ty = 滚动位置。 */
@@ -105,12 +109,15 @@ export declare interface DeckRestore {
     index?: number;
     cards: readonly NewCard[];
     carried?: readonly CarriedItem[];
+    extra?: Record<string, unknown>;
 }
 
 export declare interface DeckSnapshot {
     index: number;
     cards: Card[];
     carried: CarriedItem[];
+    /** 0.5.0：清单顶层本库不认识的键（更新版本的库写的），原样带着、保存时原样写回。没有 = {}。 */
+    extra: Record<string, unknown>;
 }
 
 declare interface GestureViewport {
@@ -141,6 +148,8 @@ export declare const REF_ICON_IDS: {
     readonly current: "check";
     readonly play: "play";
     readonly pause: "pause";
+    readonly prevFrame: "skip-prev";
+    readonly nextFrame: "skip-next";
 };
 
 export declare type RefBitmapSource = (ImageBitmap | HTMLImageElement | HTMLCanvasElement | OffscreenCanvas) & {
@@ -161,9 +170,12 @@ export declare interface RefImportOptions {
     askAbove?: Partial<Record<RefImportKind, number>>;
     /** 超过这么多字节 = 建议「只放内存」（question.suggestRam；user 2026-10-09「这里可能是全家族仓我们唯一一个真的需要nudge用户」）。不给 = 不建议。 */
     ramAbove?: number;
+    /** 0.5.0：按种类覆盖默认存法（缺的种类按 DEFAULT_RAM）。true = 不问时直接只放内存、问时建议它；false = 不问时随文档保存。
+     *  例：{ audio: false } = 这个宿主的音频照旧随文档保存。 */
+    defaultRam?: Partial<Record<RefImportKind, boolean>>;
 }
 
-/** 问用户的时候给宿主的信息。canCompress = 宿主的转码认这种；suggestRam = 超过宿主给的线（ramAbove），面板该把「只放内存」放在前面。 */
+/** 问用户的时候给宿主的信息。canCompress = 宿主的转码认这种；suggestRam = 这种默认就只放内存（defaultRam）或超过宿主给的线（ramAbove），面板该把「只放内存」放在前面。 */
 export declare interface RefImportQuestion {
     name: string;
     kind: RefImportKind;
@@ -233,6 +245,9 @@ export declare interface RefLabels {
     /** 0.4.1：＋ 菜单里的「收成小图标」；收起后那颗小图标的提示（点它恢复、拖它挪位置）。 */
     minimize?: string;
     restore?: string;
+    /** 0.5.0 视频卡：上一帧 / 下一帧钮的提示。 */
+    prevFrame?: string;
+    nextFrame?: string;
 }
 
 /** 链接卡的内容端口：宿主按 target 给字节（图片 / 文字…）。null = 现在给不出来（页被删了、还没加载）。 */
@@ -329,7 +344,7 @@ export declare class WpReferenceWindow extends HTMLElement {
     /** 拖把地板（宿主注入 = ui/floating-window 运行时量的「顶栏下缘」；缺省 60 = 旧常数，裸挂可用）。
      *  拖 / 恢复 / 视口钳制三条路都吃它——出血区规则只准一个出处（2026-09-02 C2）。 */
     topFloor: number;
-    /** 0.4.0 音频卡的速度档（宿主注入，如 [1, 0.75, 0.5]；保音高）。null = 不给速度（库的缺省；user 2026-10-09「默认不开，moonsinger开」）。 */
+    /** 0.4.0 音频卡的速度档（宿主注入，如 [1, 0.75, 0.5]；保音高）。null = 不给速度（库的缺省；user 2026-10-09「默认不开，moonsinger开」）。0.5.0 起视频卡也用它。 */
     audioRates: readonly number[] | null;
     /** 底边地板（宿主注入 = 屏底被占掉的高度：app 内软键盘、iOS 键盘那一块……；缺省 0）。拖 / resize / 视口钳制都吃它——
      *  否则右下角的 resize 把手会被键盘盖住（user 2026-09-30「参考窗或者任何浮窗需要保证 move 和 resize 能点到」）。改了之后宿主调 reclamp()。 */
@@ -347,6 +362,20 @@ export declare class WpReferenceWindow extends HTMLElement {
     private _audioOf;
     private _audioUrl;
     private _rate;
+    /** 0.5.0 视频卡：一个窗一个 <video>（藏在 shadow 里，画面由 canvas 画）。 */
+    private _videoLayer;
+    private _vPlay;
+    private _vPrev;
+    private _vNext;
+    private _vSeek;
+    private _vTime;
+    private _video;
+    private _videoOf;
+    private _videoUrl;
+    private _vFrameTime;
+    private _vFrameDur;
+    private _vStepping;
+    private _vRaf;
     private _emptyEl;
     private _plusEl;
     private _menu;
@@ -398,17 +427,32 @@ export declare class WpReferenceWindow extends HTMLElement {
     private _restoreSize;
     attributeChangedCallback(name: string, oldV: string | null, newV: string | null): void;
     close(): void;
-    /** 0.4.0 导入漏斗（deck/import.ts）：嗅种类 → 够大就问宿主（ask）→ 原样 / 压（宿主注入的 transcoder）/ 不要 → 进牌组；加进去了就开窗。
-     *  kinds 缺省 = 图片 / 文字 / 音频。结果（加了哪些、哪些没进、为什么）原样还给宿主，由宿主明说。 */
+    /** 0.4.0 导入漏斗（deck/import.ts）：嗅种类 → 够大就问宿主（ask）→ 原样 / 压（宿主注入的 transcoder）/ 只放内存 / 不要 → 进牌组；加进去了就开窗。
+     *  kinds 缺省 = 图片 / 文字 / 音频 / 视频（0.5.0 起含视频）。音频 / 视频默认只放内存（0.5.0；opts.defaultRam 可按种类改）。结果（加了哪些、哪些没进、为什么）原样还给宿主，由宿主明说。 */
     importFiles(files: readonly Blob[], opts?: Omit<RefImportOptions, "kinds"> & {
         kinds?: readonly string[];
     }): Promise<RefImportResult>;
     /** 元素从文档里拿掉 = 停（关窗不停；整个窗没了才停）。 */
     disconnectedCallback(): void;
-    /** 当前这张音频卡：播放 / 暂停（换了一张卡 = 先停上一张、从这张记着的位置放）。不是音频卡 = 什么都不做。 */
+    /** 当前这张音频 / 视频卡：播放 / 暂停（换了一张卡 = 先停上一张、从这张记着的位置放）。不是音视频卡 = 什么都不做。 */
     togglePlay(): void;
-    /** 正在放（任何一张音频卡）。 */
+    /** 正在放（任何一张音频卡，或当前这张视频卡；逐帧时那一下短暂的静音播放不算）。 */
     get playing(): boolean;
+    /** 当前这张视频卡：上一帧（-1）/ 下一帧（+1）。放着的先暂停。不是视频卡 = 什么都不做。做法见文件头「0.5.0」。 */
+    stepFrame(delta: -1 | 1): void;
+    private _seekVideo;
+    private _cancelStep;
+    /** requestVideoFrameCallback：新画了一帧。记帧的起点、量帧长、收「播到下一帧就停」的尾。 */
+    private _onVideoFrame;
+    private _armFrameCallback;
+    private _loadVideo;
+    private _stopVideo;
+    /** 播放中逐帧重画（有没有帧回调都画——帧回调只管精确计时）。 */
+    private _startVideoLoop;
+    private _stopVideoLoop;
+    /** 放到哪 / 循环 / 帧率记进卡（视图态：牌组发 view，不标脏）。 */
+    private _saveVideoPos;
+    private _updateVideoLayer;
     private _loadAudio;
     private _stopAudio;
     /** 放到哪 / 循环记进卡（视图态：牌组发 view，不标脏）。 */

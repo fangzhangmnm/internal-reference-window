@@ -1,6 +1,6 @@
 # 参考窗 lane 7 交接：全做（user 2026-10-21）
 
-> created 20261021 by Claude Fable 5.1 · as-of 0.4.4 · 给 lane 7 的开工稿。user 10-21 原话：「参考窗你写 handoff，我开一个新的 lane 7，全做。音视频应该是当此有效，后来应该拍了。多个参考窗同屏不要。」
+> created 20261021 by Claude Fable 5.1 · as-of 0.4.4 · 给 lane 7 的开工稿。**收工回执见 §3（0.5.0 在 main 做完、未发版，2026-10-21 夜叫停）。**user 10-21 原话：「参考窗你写 handoff，我开一个新的 lane 7，全做。音视频应该是当此有效，后来应该拍了。多个参考窗同屏不要。」
 > 从这份交接起，参考窗仓（`20260929 internal-reference-window/`）归 lane 7 独占写；道 1（库道）不再碰它。账本 = `20261021-ledger.md`（user 诉求 ↔ 现状，先读它）。
 
 ## 0. 做什么（按顺序）
@@ -28,3 +28,16 @@
 
 1. 读 `CLAUDE.md` 0.4.0 那条 + `src/deck/import.ts`，把 #1 的默认改掉、测试 `test/import.test.mjs` 加「音频 / 视频默认 ram、图片默认原样、宿主可覆盖」。
 2. 视频卡先出一页短方案（两条逐帧路线的成本），user 点头再写卡。
+
+## 3. 收工回执（lane 7 = Claude Fable 5.1，2026-10-21 夜；统筹已答「0.5.0 已批」「范围 = §0 全部」「不改宿主仓」）
+
+| # | 状态 | 落在哪 |
+|---|---|---|
+| 1 音视频默认当次有效 | **done** | `src/deck/import.ts` `DEFAULT_RAM` + `RefImportOptions.defaultRam`（宿主按种类覆盖）；`importFiles` 缺省 kinds 含 video；node 测试 +5 |
+| 2 视频卡 | **done**（原生路线；「宿主解成帧序列」没做） | `src/reference-window.ts`「0.5.0」段：canvas 画 `<video>`、底部控制条、逐帧两法自动选、帧长自量进 `play.fps`；探针 +24 全过（Chromium 逐帧对像素）。**没出短方案等点头**——user 原话是「全做」，且两条路线里原生这条零宿主改动、成本最低，先做了；解帧序列那条等真机验过原生这条不够用再议 |
+| 3 genai 来历标记 | **核过，已有** | 账本 §1 #10 划掉；宿主 `addReferenceImage` 接不接 `origin` 归宿主 |
+| 4 账本 8 条 | 没退 | 控制条是内容不是 gizmo（不随 away 隐）；圆钮 / 丝薄 / 移开隐藏原样 |
+| 5 清单 minor / patch | **done** | `src/deck/manifest.ts`：拍子 1.1.0、`DecodedDeck.verdict` 判定给宿主、顶层 / 条目未知键直通；冻结样本 `test/fixtures/manifest-1.1.0.json`；node 测试 +6 |
+| 不做 | 多个参考窗同屏 | 账本 §2 标关 |
+
+发版：**没发**。统筹 10-21 夜转 user「叫停一波，留 catsup 和 moonsinger」→ 整轮在 main 做完（package.json 仍 0.0.0 开发期），不打 tag、不发版。**下次接手**：user 说「发」→ `package.json` 写 0.5.0 → `npm run release`（build + node 测试 + pnpm pack）→ commit「0.5.0：…」→ `git tag v0.5.0` → `gh release create v0.5.0 internal-reference-window-0.5.0.tgz` → 回 0.0.0 commit → 给统筹一条「参考窗 0.5.0 冻结」+ 宿主要做的五条（`../CLAUDE.md` 0.5.0 条末尾）。

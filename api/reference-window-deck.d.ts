@@ -18,15 +18,19 @@ export declare interface Card {
     ram: {
         bytes: number;
     } | null;
+    /** 0.5.0 清单纪律（家族根 ai-docs/20261021-format-version-discipline.md §3「直通」）：清单条目里本库不认识的键（更新版本的库写的、或宿主自己塞的）
+     *  原样带着、保存时原样写回；已知键永远赢。null = 没有。 */
+    extra: Record<string, unknown> | null;
 }
 
 /** 卡片种类是开放集。库自带的种类名见各 kinds 入口；宿主可以登记自己的。 */
 export declare type CardKind = string;
 
-/** 音视频的播放位置。 */
+/** 音视频的播放位置。fps（0.5.0，视频卡）= 量到 / 宿主给的帧率，逐帧后退按它算一帧多长；没有 = 还没量到（第一次「下一帧」会播到下一帧再停，顺手量出来）。 */
 export declare interface CardPlay {
     t: number;
     loop: boolean;
+    fps?: number;
 }
 
 /** 每张卡自己的视图状态。图片：平移 / 缩放 / 旋转。文字：scale = 字号倍率，ty = 滚动位置。 */
@@ -48,6 +52,8 @@ export declare interface CarriedItem {
         src?: Blob;
     };
 }
+
+export declare function compareDeckStamp(file: DeckStamp, mine?: DeckStamp): DeckManifestVerdict;
 
 export declare function createDeck(): Deck;
 
@@ -85,7 +91,10 @@ export declare interface Deck {
 
 export declare const DECK_MANIFEST_NAME = "manifest.json";
 
-export declare const DECK_MANIFEST_VERSION = 1;
+export declare const DECK_MANIFEST_STAMP: Readonly<DeckStamp>;
+
+/** = DECK_MANIFEST_STAMP.major（0.2.0 起的名字，留着）。 */
+export declare const DECK_MANIFEST_VERSION: number;
 
 export declare type DeckChange = 
 /** 增 / 删 / 挪：牌组内容变了，宿主应标脏。 */
@@ -109,37 +118,56 @@ export declare type DeckChange =
 /** 参考窗在容器里住的目录（不带尾斜杠）。 */
 export declare function deckDir(app: string): string;
 
+/** 清单（升到本库 major 之后的样子）。version = major；minor / patch = 文件里写的（缺 = 0）；extra = 顶层不认识的键。 */
 export declare interface DeckManifest {
     version: number;
+    minor: number;
+    patch: number;
     index: number;
     items: ManifestItem[];
+    extra: Record<string, unknown>;
 }
 
-/** 清单版本比这个库新：不降级、不猜，报出去。 */
+/** 清单版本（major）比这个库新：不降级、不猜，报出去。 */
 export declare class DeckManifestTooNewError extends Error {
     readonly fileVersion: number;
     readonly libVersion: number;
     constructor(fileVersion: number, libVersion: number);
 }
 
+/** 同 major 下文件拍 vs 本库拍。too-new（major 大）不在这里——它走异常。 */
+export declare type DeckManifestVerdict = "same" | "older" | "newer-minor" | "newer-patch";
+
 /** restore 的入参：卡可以不带 id（载入时本来就没有）。 */
 export declare interface DeckRestore {
     index?: number;
     cards: readonly NewCard[];
     carried?: readonly CarriedItem[];
+    extra?: Record<string, unknown>;
 }
 
 export declare interface DeckSnapshot {
     index: number;
     cards: Card[];
     carried: CarriedItem[];
+    /** 0.5.0：清单顶层本库不认识的键（更新版本的库写的），原样带着、保存时原样写回。没有 = {}。 */
+    extra: Record<string, unknown>;
 }
 
-/** 解码结果可以直接喂 Deck.restore()。 */
+export declare interface DeckStamp {
+    major: number;
+    minor: number;
+    patch: number;
+}
+
+/** 解码结果可以直接喂 Deck.restore()。stamp = 文件里的拍子；verdict = 它和本库比（0.5.0）——"newer-minor" 时宿主该告诉用户一次（不弹窗不拦）。 */
 export declare interface DecodedDeck {
     index: number;
     cards: NewCard[];
     carried: CarriedItem[];
+    extra: Record<string, unknown>;
+    stamp: DeckStamp;
+    verdict: DeckManifestVerdict;
 }
 
 /** 从容器里读回牌组。目录里没有 manifest.json → 空牌组（不是错）。清单不是合法 JSON → 抛错（不静默当空）。 */
@@ -155,6 +183,10 @@ export declare interface DecodeOptions {
     /** 按文件名（含目录）取字节；没有就返回 null。 */
     getFile: (path: string) => Blob | null;
 }
+
+/** 0.5.0：按种类的默认存法。**音频 / 视频默认「只放内存」（当次有效）**，图片 / 文字默认随文档保存。
+ *  user 2026-10-21「音视频应该是当此有效，后来应该拍了」；2026-10-09「能不能加 RAM only，就是不落盘，每次重新上传，这个非常有用！！！」。宿主可按种类覆盖（RefImportOptions.defaultRam）。 */
+export declare const DEFAULT_RAM: Readonly<Record<RefImportKind, boolean>>;
 
 /** 把牌组编成容器里的一组文件：`.<app>/references/manifest.json` + 每张卡的字节。宿主原样存。 */
 export declare function encodeDeck(s: DeckSnapshot, o: EncodeOptions): Map<string, Blob>;
@@ -189,7 +221,7 @@ export declare interface ManifestItem {
     [extra: string]: unknown;
 }
 
-/** 把任何版本的清单升到当前版。缺 version 视为 1；不是对象 → 空清单。 */
+/** 把任何版本的清单升到当前 major。缺 version 视为 1；不是对象 → 空清单。minor / patch 照文件（经过 STEP 的以 STEP 写的为准，缺 = 0）；顶层不认识的键进 extra。 */
 export declare function migrateDeckManifest(json: unknown): DeckManifest;
 
 /** 文件名 → mime（按扩展名猜）。猜不出 → ""。 */
@@ -199,6 +231,9 @@ export declare function mimeForName(name: string): string;
 export declare type NewCard = {
     kind: CardKind;
 } & Partial<Omit<Card, "id" | "kind">>;
+
+/** 读一份清单 JSON 的拍子：version 缺 = 1（WeebPaint format 2 搬来的清单）；minor / patch 缺或非法 = 0。 */
+export declare function readDeckStamp(json: unknown): DeckStamp;
 
 /** keep = 原样存进文档；compress = 宿主转码后存；ram = 只放内存（不存，下次是空位、提示重新导入）；cancel = 不要。 */
 export declare type RefImportChoice = "keep" | "compress" | "ram" | "cancel";
@@ -214,9 +249,12 @@ export declare interface RefImportOptions {
     askAbove?: Partial<Record<RefImportKind, number>>;
     /** 超过这么多字节 = 建议「只放内存」（question.suggestRam；user 2026-10-09「这里可能是全家族仓我们唯一一个真的需要nudge用户」）。不给 = 不建议。 */
     ramAbove?: number;
+    /** 0.5.0：按种类覆盖默认存法（缺的种类按 DEFAULT_RAM）。true = 不问时直接只放内存、问时建议它；false = 不问时随文档保存。
+     *  例：{ audio: false } = 这个宿主的音频照旧随文档保存。 */
+    defaultRam?: Partial<Record<RefImportKind, boolean>>;
 }
 
-/** 问用户的时候给宿主的信息。canCompress = 宿主的转码认这种；suggestRam = 超过宿主给的线（ramAbove），面板该把「只放内存」放在前面。 */
+/** 问用户的时候给宿主的信息。canCompress = 宿主的转码认这种；suggestRam = 这种默认就只放内存（defaultRam）或超过宿主给的线（ramAbove），面板该把「只放内存」放在前面。 */
 export declare interface RefImportQuestion {
     name: string;
     kind: RefImportKind;

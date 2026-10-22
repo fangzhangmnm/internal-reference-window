@@ -13,10 +13,13 @@ export interface RefTranscoder {
   estimate?(kind: RefImportKind, file: Blob): Promise<number | null>;
   encode(kind: RefImportKind, file: Blob): Promise<{ blob: Blob; mime: string; note?: string }>;
 }
-/** 问用户的时候给宿主的信息。canCompress = 宿主的转码认这种；suggestRam = 超过宿主给的线（ramAbove），面板该把「只放内存」放在前面。 */
+/** 问用户的时候给宿主的信息。canCompress = 宿主的转码认这种；suggestRam = 这种默认就只放内存（defaultRam）或超过宿主给的线（ramAbove），面板该把「只放内存」放在前面。 */
 export interface RefImportQuestion { name: string; kind: RefImportKind; bytes: number; estimate: number | null; canCompress: boolean; suggestRam: boolean }
 /** keep = 原样存进文档；compress = 宿主转码后存；ram = 只放内存（不存，下次是空位、提示重新导入）；cancel = 不要。 */
 export type RefImportChoice = "keep" | "compress" | "ram" | "cancel";
+/** 0.5.0：按种类的默认存法。**音频 / 视频默认「只放内存」（当次有效）**，图片 / 文字默认随文档保存。
+ *  user 2026-10-21「音视频应该是当此有效，后来应该拍了」；2026-10-09「能不能加 RAM only，就是不落盘，每次重新上传，这个非常有用！！！」。宿主可按种类覆盖（RefImportOptions.defaultRam）。 */
+export const DEFAULT_RAM: Readonly<Record<RefImportKind, boolean>> = { image: false, text: false, audio: true, video: true };
 export interface RefImportOptions {
   /** 这个宿主画得出来的种类（不在里面的 = 不收、报 unsupported）。 */
   kinds: readonly string[];
@@ -26,6 +29,9 @@ export interface RefImportOptions {
   askAbove?: Partial<Record<RefImportKind, number>>;
   /** 超过这么多字节 = 建议「只放内存」（question.suggestRam；user 2026-10-09「这里可能是全家族仓我们唯一一个真的需要nudge用户」）。不给 = 不建议。 */
   ramAbove?: number;
+  /** 0.5.0：按种类覆盖默认存法（缺的种类按 DEFAULT_RAM）。true = 不问时直接只放内存、问时建议它；false = 不问时随文档保存。
+   *  例：{ audio: false } = 这个宿主的音频照旧随文档保存。 */
+  defaultRam?: Partial<Record<RefImportKind, boolean>>;
 }
 export interface RefImportSkip { name: string; why: "unsupported" | "cancelled" | "failed"; message?: string }
 /** filled = 补回了「只放内存」的空位（同种类、同名的那张；没新加卡）。 */
@@ -53,13 +59,15 @@ export async function importIntoDeck(deck: Deck, files: readonly (Blob & { name?
     const hole = deck.cards().find((c) => c.ram && !c.bytes && c.kind === kind && c.name === name);
     if (hole) { deck.fill(hole.id, f, f.type || undefined); deck.select(deck.indexOf(hole.id)); out.filled.push(hole); continue; }
     try {
-      let blob: Blob = f, mime = f.type || "", ram = false;
+      // 默认存法按种类（0.5.0：音视频默认只放内存）；问了 = 用户的选择说了算（keep / compress 都是「存进文档」）
+      const ramDefault = o.defaultRam?.[kind] ?? DEFAULT_RAM[kind];
+      let blob: Blob = f, mime = f.type || "", ram = ramDefault;
       const canCompress = !!o.transcoder?.kinds.includes(kind), limit = o.askAbove?.[kind];
       if (o.ask && limit !== undefined && f.size > limit) {
         const estimate = canCompress && o.transcoder?.estimate ? await o.transcoder.estimate(kind, f).catch(() => null) : null;
-        const choice = await o.ask({ name, kind, bytes: f.size, estimate, canCompress, suggestRam: o.ramAbove !== undefined && f.size > o.ramAbove });
+        const choice = await o.ask({ name, kind, bytes: f.size, estimate, canCompress, suggestRam: ramDefault || (o.ramAbove !== undefined && f.size > o.ramAbove) });
         if (choice === "cancel") { out.skipped.push({ name, why: "cancelled" }); continue; }
-        if (choice === "ram") ram = true;
+        ram = choice === "ram";
         if (choice === "compress" && canCompress) { const r = await o.transcoder!.encode(kind, f); blob = r.blob; mime = r.mime; if (r.note) out.notes.push(`${name}: ${r.note}`); }
       }
       if (kind === "text" && !mime) mime = /\.md$/i.test(name) ? "text/markdown" : "text/plain";

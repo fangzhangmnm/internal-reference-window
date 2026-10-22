@@ -15,8 +15,48 @@
 
 import type { Card, CardPlay, CardView, CarriedItem, DeckSnapshot, NewCard } from "./deck.ts";
 
-export const DECK_MANIFEST_VERSION = 1;
+// ---- 清单的拍子（0.5.0 起三个数；家族格式版本纪律 = 家族根 ai-docs/20261021-format-version-discipline.md §2 / §3；user 2026-10-21「这个变成全家的版本纪律」「三级语义 同意」）----
+//   物理形状：沿用整数键 `version` 当 **major**（已发出去的老库只认它，它们的 too-new 逻辑继续有效），再加两个可选整数键 `minor` / `patch`（缺 = 0）。
+//   · major 比本库大 = 不可兼容 → 拒读（DeckManifestTooNewError，不降级不猜）。
+//   · minor 比本库大 = 缺功能 / 行为变化 → 能读能存：不认识的键原样带回（顶层 → DeckSnapshot.extra，条目 → Card.extra），
+//     并把判决（DecodedDeck.verdict = "newer-minor"）交给宿主——宿主告诉用户一次「这份是更新版本写的，这版没有的功能保存时不丢、只是看不到」，不弹窗不拦。
+//   · patch 比本库大 = 可以无脑降 → "newer-patch"，静默。
+//   · 比本库小：major 小 = STEPS 链式升级；minor / patch 小 = 缺的当默认（"older"）。
+//   · 同 major 内只加不改；删字段 = 保留读、停止写；真要删 = major +1 + 一条 STEP + 一份冻结样本。
+//   拍子史：1.0.0 = 0.2.0 目录制（WeebPaint format 2 的 refPanels 没有 version = 1）；0.4.0 加的可选 `ram` 没标过 minor（0.4.x 写的文件 minor 缺 = 0）；
+//   **1.1.0 = 0.5.0**：顶层 `minor` / `patch` 两键 + 条目 `play.fps`（视频卡帧率）。
+export interface DeckStamp { major: number; minor: number; patch: number }
+export const DECK_MANIFEST_STAMP: Readonly<DeckStamp> = { major: 1, minor: 1, patch: 0 };
+/** = DECK_MANIFEST_STAMP.major（0.2.0 起的名字，留着）。 */
+export const DECK_MANIFEST_VERSION = DECK_MANIFEST_STAMP.major;
 export const DECK_MANIFEST_NAME = "manifest.json";
+/** 同 major 下文件拍 vs 本库拍。too-new（major 大）不在这里——它走异常。 */
+export type DeckManifestVerdict = "same" | "older" | "newer-minor" | "newer-patch";
+
+const nat = (v: unknown): number | null => (typeof v === "number" && Number.isInteger(v) && v >= 0 ? v : null);
+/** 读一份清单 JSON 的拍子：version 缺 = 1（WeebPaint format 2 搬来的清单）；minor / patch 缺或非法 = 0。 */
+export function readDeckStamp(json: unknown): DeckStamp {
+  const o = isObj(json) ? json : {};
+  const major = typeof o.version === "number" && Number.isFinite(o.version) ? Math.trunc(o.version) : 1;
+  return { major, minor: nat(o.minor) ?? 0, patch: nat(o.patch) ?? 0 };
+}
+export function compareDeckStamp(file: DeckStamp, mine: DeckStamp = DECK_MANIFEST_STAMP): DeckManifestVerdict {
+  if (file.major !== mine.major) return "older";   // major 不同只会是小（大的早在 migrate 里抛了）
+  if (file.minor > mine.minor) return "newer-minor";
+  if (file.minor < mine.minor) return "older";
+  if (file.patch > mine.patch) return "newer-patch";
+  if (file.patch < mine.patch) return "older";
+  return "same";
+}
+/** 清单顶层本库认识的键；其余原样直通（DeckSnapshot.extra）。 */
+const KNOWN_MANIFEST_KEYS: ReadonlySet<string> = new Set(["version", "minor", "patch", "index", "items"]);
+/** 条目里本库认识的键；其余原样直通（Card.extra）。 */
+const KNOWN_ITEM_KEYS: ReadonlySet<string> = new Set(["kind", "src", "vp", "name", "mime", "target", "origin", "play", "ram"]);
+function pickExtra(o: Record<string, unknown>, known: ReadonlySet<string>): Record<string, unknown> | null {
+  let out: Record<string, unknown> | null = null;
+  for (const k of Object.keys(o)) if (!known.has(k)) { (out ??= {})[k] = JSON.parse(JSON.stringify(o[k] ?? null)); }
+  return out;
+}
 
 /** 参考窗在容器里住的目录（不带尾斜杠）。 */
 export function deckDir(app: string): string {
@@ -38,10 +78,14 @@ export interface ManifestItem {
   ram?: { bytes: number };
   [extra: string]: unknown;
 }
+/** 清单（升到本库 major 之后的样子）。version = major；minor / patch = 文件里写的（缺 = 0）；extra = 顶层不认识的键。 */
 export interface DeckManifest {
   version: number;
+  minor: number;
+  patch: number;
   index: number;
   items: ManifestItem[];
+  extra: Record<string, unknown>;
 }
 
 export interface EncodeOptions {
@@ -55,10 +99,10 @@ export interface DecodeOptions {
   /** 按文件名（含目录）取字节；没有就返回 null。 */
   getFile: (path: string) => Blob | null;
 }
-/** 解码结果可以直接喂 Deck.restore()。 */
-export interface DecodedDeck { index: number; cards: NewCard[]; carried: CarriedItem[] }
+/** 解码结果可以直接喂 Deck.restore()。stamp = 文件里的拍子；verdict = 它和本库比（0.5.0）——"newer-minor" 时宿主该告诉用户一次（不弹窗不拦）。 */
+export interface DecodedDeck { index: number; cards: NewCard[]; carried: CarriedItem[]; extra: Record<string, unknown>; stamp: DeckStamp; verdict: DeckManifestVerdict }
 
-/** 清单版本比这个库新：不降级、不猜，报出去。 */
+/** 清单版本（major）比这个库新：不降级、不猜，报出去。 */
 export class DeckManifestTooNewError extends Error {
   readonly fileVersion: number;
   readonly libVersion: number;
@@ -107,10 +151,10 @@ const STEPS: Record<number, Step> = {};
 
 function isObj(x: unknown): x is Record<string, unknown> { return !!x && typeof x === "object" && !Array.isArray(x); }
 
-/** 把任何版本的清单升到当前版。缺 version 视为 1；不是对象 → 空清单。 */
+/** 把任何版本的清单升到当前 major。缺 version 视为 1；不是对象 → 空清单。minor / patch 照文件（经过 STEP 的以 STEP 写的为准，缺 = 0）；顶层不认识的键进 extra。 */
 export function migrateDeckManifest(json: unknown): DeckManifest {
   const src = isObj(json) ? json : {};
-  let v = typeof src.version === "number" && Number.isFinite(src.version) ? Math.trunc(src.version) : 1;
+  let v = readDeckStamp(src).major;
   if (v > DECK_MANIFEST_VERSION) throw new DeckManifestTooNewError(v, DECK_MANIFEST_VERSION);
   let cur: Record<string, unknown> = src;
   while (v < DECK_MANIFEST_VERSION) {
@@ -121,7 +165,8 @@ export function migrateDeckManifest(json: unknown): DeckManifest {
   }
   const items = Array.isArray(cur.items) ? (cur.items as unknown[]).filter((it): it is ManifestItem => isObj(it) && typeof it.kind === "string" && !!it.kind) : [];
   const index = typeof cur.index === "number" && Number.isFinite(cur.index) ? Math.trunc(cur.index) : 0;
-  return { version: DECK_MANIFEST_VERSION, index, items };
+  const { minor, patch } = readDeckStamp(cur);
+  return { version: DECK_MANIFEST_VERSION, minor, patch, index, items, extra: pickExtra(cur, KNOWN_MANIFEST_KEYS) ?? {} };
 }
 
 function readView(x: unknown): CardView | null {
@@ -132,7 +177,8 @@ function readView(x: unknown): CardView | null {
 }
 function readPlay(x: unknown): CardPlay | null {
   if (!isObj(x) || typeof x.t !== "number" || !Number.isFinite(x.t)) return null;
-  return { t: x.t, loop: !!x.loop };
+  const fps = typeof x.fps === "number" && Number.isFinite(x.fps) && x.fps > 0 ? x.fps : undefined;
+  return fps !== undefined ? { t: x.t, loop: !!x.loop, fps } : { t: x.t, loop: !!x.loop };
 }
 const str = (x: unknown): string => (typeof x === "string" ? x : "");
 
@@ -140,7 +186,7 @@ const str = (x: unknown): string => (typeof x === "string" ? x : "");
 export async function decodeDeck(o: DecodeOptions): Promise<DecodedDeck> {
   const dir = deckDir(o.app);
   const blob = o.getFile(`${dir}/${DECK_MANIFEST_NAME}`);
-  if (!blob) return { index: 0, cards: [], carried: [] };
+  if (!blob) return { index: 0, cards: [], carried: [], extra: {}, stamp: { ...DECK_MANIFEST_STAMP }, verdict: "same" };
   let json: unknown;
   try { json = JSON.parse(await blob.text()); }
   catch (e) { throw new Error(`decodeDeck: ${dir}/${DECK_MANIFEST_NAME} is not valid JSON: ${String((e as Error).message)}`); }
@@ -149,7 +195,9 @@ export async function decodeDeck(o: DecodeOptions): Promise<DecodedDeck> {
 
 /** 清单已经在手上（宿主从别处搬来的、或测试）时用这个。 */
 export function decodeDeckFromJson(manifestJson: unknown, o: Pick<DecodeOptions, "knownKinds" | "getFile">): DecodedDeck {
+  const stamp = readDeckStamp(manifestJson);   // 文件原来的拍子（判决按它；major 比本库新的在下一行抛）
   const m = migrateDeckManifest(manifestJson);
+  const verdict = compareDeckStamp(stamp);
   const known = new Set(o.knownKinds);
   const cards: NewCard[] = [];
   const carried: CarriedItem[] = [];
@@ -176,10 +224,11 @@ export function decodeDeckFromJson(manifestJson: unknown, o: Pick<DecodeOptions,
       play: readPlay(raw.play),
       origin: str(raw.origin) || null,
       ram,
+      extra: pickExtra(raw, KNOWN_ITEM_KEYS),
     });
   });
   if (!indexSet) index = Math.max(0, Math.min(cards.length - 1, m.index));
-  return { index, cards, carried };
+  return { index, cards, carried, extra: m.extra, stamp, verdict };
 }
 
 /** 把牌组编成容器里的一组文件：`.<app>/references/manifest.json` + 每张卡的字节。宿主原样存。 */
@@ -215,11 +264,16 @@ export function encodeDeck(s: DeckSnapshot, o: EncodeOptions): Map<string, Blob>
     if (c.mime && (!item.src || mimeForName(item.src) !== c.mime.split(";")[0]!.trim().toLowerCase())) item.mime = c.mime;
     if (c.target) item.target = c.target;
     if (c.origin) item.origin = c.origin;
-    if (c.play) item.play = { t: c.play.t, loop: c.play.loop };
+    if (c.play) item.play = c.play.fps ? { t: c.play.t, loop: c.play.loop, fps: c.play.fps } : { t: c.play.t, loop: c.play.loop };
     if (c.ram) item.ram = { bytes: c.ram.bytes };
+    // 条目里不认识的键（更新版本的库写的）原样带回，排在已知键后面；已知键永远赢
+    if (c.extra) for (const k of Object.keys(c.extra)) if (!KNOWN_ITEM_KEYS.has(k)) item[k] = c.extra[k];
     items.push(item);
   });
-  const manifest: DeckManifest = { version: DECK_MANIFEST_VERSION, index, items };
+  // 拍子写在最前（人眼一看就知道多新）；顶层不认识的键夹在中间原样带回；index / items 殿后。写入器只写本库的拍，直通的键里不含拍子本身。
+  const manifest: Record<string, unknown> = { version: DECK_MANIFEST_STAMP.major, minor: DECK_MANIFEST_STAMP.minor, patch: DECK_MANIFEST_STAMP.patch };
+  for (const k of Object.keys(s.extra ?? {})) if (!KNOWN_MANIFEST_KEYS.has(k)) manifest[k] = s.extra[k];
+  manifest.index = index; manifest.items = items;
   const out = new Map<string, Blob>();
   out.set(`${dir}/${DECK_MANIFEST_NAME}`, new Blob([JSON.stringify(manifest)], { type: "application/json" }));
   for (const [n, b] of files) out.set(n, b);

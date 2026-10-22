@@ -387,8 +387,104 @@ try {
   await linkedCards();
   await bottomFloor();
   await audioCards();
+  await videoCards();
 } catch (e) {
   add("探针自己炸了", false, String(e?.stack ?? e));
+}
+
+// ---- 0.5.0 视频卡（2026-10-21，Claude Fable 5.1 lane 7）：样本 = 20 帧 64×64 灰阶（帧 i = 灰 10 + 12 i）、10 fps、2 s、VP9（ffmpeg 生成，test/probes/fixtures/）----
+async function videoBlob() { const r = await fetch("/test/probes/fixtures/gray-steps-10fps.webm"); return new Blob([await r.arrayBuffer()], { type: "video/webm" }); }
+/** canvas 中心像素的灰度；没画 / 不是灰 = -1 */
+function gray(el) { const [r, g, b, a] = center(el).split(",").map(Number); return a === 255 && Math.abs(r - g) <= 3 && Math.abs(g - b) <= 3 ? r : -1; }
+function near(x, want, tol = 6) { return Math.abs(x - want) <= tol; }
+function frameGray(i) { return 10 + 12 * i; }
+function vbar(el) { return el.shadowRoot.querySelector(".video"); }
+function vtime(el) { return el.shadowRoot.querySelector(".vtime").textContent; }
+async function videoCards() {
+  const el = mount(), menu = fakeMenu(el);
+  el.labels = { kindNames: { video: "视频" }, prevFrame: "上一帧", nextFrame: "下一帧", ram: "只放内存", ramMissing: "只在内存里——拖进来 / 点＋重新导入" };
+  const blob = await videoBlob();
+  const id = el.deck.add({ kind: "video", name: "steps.webm", bytes: blob, mime: "video/webm" });
+  await until(() => gray(el) >= 0, 5000);
+  add("video:视频卡 → 第一帧画在 canvas 上（帧 0 = 灰 10）、控制条显示、画布不藏", near(gray(el), frameGray(0)) && vbar(el).classList.contains("shown") && el.shadowRoot.querySelector("canvas").style.visibility !== "hidden", `gray=${gray(el)} shown=${vbar(el).classList.contains("shown")}`);
+  add("video:不自动放", !el.playing);
+  const cw = el.clientWidth, ch = el.clientHeight, expect = Math.min(cw / 64, ch / 64) * 0.95;
+  add("video:按画面像素（videoWidth 64）适应窗口，手势和图片卡一套", Math.abs(el.viewport.scale - expect) < 1e-6, `scale=${el.viewport.scale.toFixed(4)} expect=${expect.toFixed(4)}`);
+  add("video:上一帧 / 下一帧钮挂着 labels", el.shadowRoot.querySelector(".vprev").title === "上一帧" && el.shadowRoot.querySelector(".vnext").title === "下一帧");
+  add("video:<video> 本尊在 shadow 里、藏着（1 px、裁空），不是 display:none", (() => { const v = el.shadowRoot.querySelector("video.vsrc"); const cs = v && getComputedStyle(v); return !!v && cs.display !== "none" && cs.width === "1px"; })());
+  let items = menu.items().map((i) => i.id);
+  add("video:＋ 菜单有循环、1:1、只放内存", items.includes("loop") && items.includes("onetoone") && items.includes("ram"), items.join(","));
+  menu.opts.onClose?.();
+
+  // 下一帧：还不知道帧长 → 静音播到下一帧就停，顺手量帧长
+  el.stepFrame(1);
+  await until(() => near(gray(el), frameGray(1)) && !el.playing && !el.shadowRoot.querySelector(".vnext").disabled, 3000);
+  const v = el.shadowRoot.querySelector("video.vsrc");
+  add("video:下一帧（没帧率时播到下一帧就停）→ 帧 1 = 灰 22、停着、没留下静音", near(gray(el), frameGray(1)) && !el.playing && v.paused && v.muted === false, `gray=${gray(el)} paused=${v.paused} muted=${v.muted} t=${v.currentTime}`);
+  el.stepFrame(1);
+  await until(() => near(gray(el), frameGray(2)) && !!el.deck.get(id).play?.fps, 3000);
+  const fps = el.deck.get(id).play?.fps;
+  add("video:再下一帧 → 帧 2 = 灰 34；量到的帧率记进卡 play.fps ≈ 10", near(gray(el), frameGray(2)) && near(fps, 10, 0.6), `gray=${gray(el)} fps=${fps}`);
+  el.stepFrame(1);
+  await until(() => near(gray(el), frameGray(3)), 3000);
+  add("video:知道帧长后下一帧 = 直接 seek → 帧 3 = 灰 46", near(gray(el), frameGray(3)), `gray=${gray(el)}`);
+  el.stepFrame(-1);
+  await until(() => near(gray(el), frameGray(2)), 3000);
+  add("video:上一帧 → 帧 2 = 灰 34", near(gray(el), frameGray(2)), `gray=${gray(el)}`);
+  el.stepFrame(-1); await until(() => near(gray(el), frameGray(1)), 3000);
+  add("video:再上一帧 → 帧 1；时间栏写着帧号 #1", near(gray(el), frameGray(1)) && vtime(el).includes("#1"), `gray=${gray(el)} time=${vtime(el)}`);
+
+  // 播放到底
+  el.togglePlay();
+  await until(() => el.playing, 2000);
+  add("video:播放 → playing、钮换成暂停", el.playing && el.shadowRoot.querySelector(".vplay").dataset.icon === "pause");
+  await until(() => !el.playing && gray(el) >= frameGray(17), 6000);
+  add("video:放到底 → 停在末帧（灰 238）、位置记进卡（视图态）", !el.playing && near(gray(el), frameGray(19)) && el.deck.get(id).play.t > 1.5, `gray=${gray(el)} play=${JSON.stringify(el.deck.get(id).play)}`);
+
+  // 进度条拖到开头
+  const seek = el.shadowRoot.querySelector(".vseek");
+  seek.value = "0"; seek.dispatchEvent(new Event("input", { bubbles: true }));
+  await until(() => near(gray(el), frameGray(0)), 3000);
+  add("video:拖进度条到 0 → 帧 0", near(gray(el), frameGray(0)), `gray=${gray(el)}`);
+  // 方向键 = 逐帧（窗有焦点）
+  el.focus(); el.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, composed: true, cancelable: true }));
+  await until(() => near(gray(el), frameGray(1)), 3000);
+  add("video:→ 键 = 下一帧", near(gray(el), frameGray(1)), `gray=${gray(el)}`);
+  el.dispatchEvent(new KeyboardEvent("keydown", { key: ",", bubbles: true, composed: true, cancelable: true }));
+  await until(() => near(gray(el), frameGray(0)), 3000);
+  add("video:, 键 = 上一帧", near(gray(el), frameGray(0)), `gray=${gray(el)}`);
+
+  // 翻到别的卡 = 暂停、控制条藏；翻回来 = 还在
+  el.togglePlay(); await until(() => el.playing, 2000);
+  el.deck.add({ kind: "image", name: "红", bytes: await png("#ff0000") });
+  await until(() => center(el) === RED);
+  add("video:翻到别的卡 → 暂停、控制条藏起来", !el.playing && !vbar(el).classList.contains("shown"), `playing=${el.playing}`);
+  el.deck.select(0);
+  await until(() => gray(el) >= 0 && vbar(el).classList.contains("shown"), 3000);
+  add("video:翻回来 → 画面还在、控制条让出翻页条那一排（paged）", gray(el) >= 0 && vbar(el).classList.contains("paged"), `gray=${gray(el)}`);
+  // 循环记进卡
+  menu.items(); add("video:循环点了菜单不关（keep）、记进 play.loop", menu.pick("loop") === "keep" && el.deck.get(id).play?.loop === true && v.loop === true); menu.opts.onClose?.();
+
+  // 只放内存往返：视频的空位 = 文字层一句话；同名拖回来补回原位、画出来；fps 跟着清单走
+  el.deck.setRam(id, true);
+  const { encodeDeck, decodeDeck } = await import("/dist/deck/index.js");
+  const files = encodeDeck(el.deck.snapshot(), { app: "probe" });
+  const man = JSON.parse(await files.get(".probe/references/manifest.json").text());
+  add("ram:视频只放内存 → 字节不进文件、清单记着 ram + play.fps + 拍子 1.1.0", ![...files.keys()].some((k) => k.endsWith(".webm")) && man.items[0].ram?.bytes === blob.size && near(man.items[0].play?.fps, 10, 0.6) && man.minor === 1, JSON.stringify({ keys: [...files.keys()], item: man.items[0], minor: man.minor }));
+  const back = await decodeDeck({ app: "probe", knownKinds: ["image", "audio", "video", "text"], getFile: (p) => files.get(p) ?? null });
+  const el2 = mount(); el2.labels = { ramMissing: "只在内存里——拖进来 / 点＋重新导入" };
+  el2.deck.restore(back); el2.deck.select(0); await frame();
+  add("ram:视频的空位 = 文字层写名字 · 大小 + 怎么补，控制条不出", textShown(el2) && textEl(el2).textContent.includes("steps.webm") && textEl(el2).textContent.includes("重新导入") && !vbar(el2).classList.contains("shown"), textEl(el2).textContent);
+  const r = await el2.importFiles([new File([blob], "steps.webm", { type: "video/webm" })]);
+  await until(() => gray(el2) >= 0, 5000);
+  add("ram:同名拖回来 = 补回原位、画出来；上次量的帧率还在", r.filled.length === 1 && r.added.length === 0 && gray(el2) >= 0 && vbar(el2).classList.contains("shown") && near(el2.deck.cards()[0].play?.fps, 10, 0.6), `filled=${r.filled.length} gray=${gray(el2)} fps=${el2.deck.cards()[0].play?.fps}`);
+  // 导入漏斗默认：视频 / 音频默认只放内存，图片随文档
+  const r2 = await el2.importFiles([new File([blob], "clip.webm", { type: "video/webm" }), new File([await png("#00ff00")], "p.png", { type: "image/png" })]);
+  add("import:视频默认只放内存（当次有效）、图片默认随文档保存", r2.added.length === 2 && r2.added[0].ram?.bytes === blob.size && !!r2.added[0].bytes && r2.added[1].ram === null, JSON.stringify(r2.added.map((c) => ({ k: c.kind, ram: c.ram }))));
+  // 删掉正在看的视频卡 → <video> 拿掉
+  el.deck.remove(id); await frame();
+  add("video:删了这张 → <video> 从 shadow 里拿掉", !el.shadowRoot.querySelector("video.vsrc"));
+  el.remove(); el2.remove();
 }
 
 // ---- 0.4.0 音频卡 + 只放内存（2026-10-09，Claude Opus 5.5）----
