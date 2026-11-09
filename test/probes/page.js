@@ -36,7 +36,7 @@ function mount() {
 }
 function listen(el) {
   const log = [];
-  for (const n of ["itemschange", "viewportchange", "rectchange", "openchange", "notice"]) el.addEventListener(n, (e) => log.push({ n, d: e.detail }));
+  for (const n of ["itemschange", "viewportchange", "rectchange", "openchange", "notice", "editrefused"]) el.addEventListener(n, (e) => log.push({ n, d: e.detail }));
   return log;
 }
 const names = (log) => log.map((e) => e.n).filter((n) => n !== "rectchange").join(",");
@@ -263,6 +263,33 @@ async function reorderAndJump() {
 const textEl = (el) => el.shadowRoot.querySelector(".text");
 const textShown = (el) => textEl(el).classList.contains("shown");
 
+/** 0.6.0：宿主说「现在不让改」时，挪卡 / 删卡 / 加宿主画面的卡都不动、发 editrefused；翻页和跳转照常。 */
+async function editGate() {
+  const el = mount(), log = listen(el), menu = fakeMenu(el);
+  el.labels = { kindNames: { image: "图片" } };
+  for (const [n, c] of [["红", "#ff0000"], ["绿", "#00ff00"], ["蓝", "#0000ff"]]) el.deck.add({ kind: "image", name: n, bytes: await png(c) });
+  await until(() => center(el) === BLUE);
+  const order = () => el.deck.cards().map((c) => c.name || "·").join("");
+  let allow = false, asked = 0;
+  el.canEdit = () => { asked++; return allow; };
+  menu.items(); log.length = 0;
+  menu.pick("earlier"); await frame();
+  add("editGate:不让改时挪卡 → 顺序不变、不发 itemschange、发 editrefused", order() === "红绿蓝" && names(log) === "editrefused" && asked === 1, `order=${order()} events=${names(log)} asked=${asked}`);
+  log.length = 0;
+  menu.pick("delete"); menu.pick("delete"); await frame();   // 第一下是「再点一次确认」，第二下才真删
+  add("editGate:不让改时删卡 → 一张没少、发 editrefused", el.deck.size === 3 && names(log) === "editrefused", `size=${el.deck.size} events=${names(log)}`);
+  log.length = 0;
+  el.shadowRoot.querySelector("[data-jump]").click(); menu.pick("jump:0"); await frame();
+  add("editGate:不让改时跳到别的卡 → 照常（那是看，不是改），不问宿主", center(el) === RED && names(log) === "itemschange" && asked === 2, `${center(el)} events=${names(log)} asked=${asked}`);
+  allow = true; menu.items(); log.length = 0;
+  menu.pick("later"); await frame();
+  add("editGate:让改了 → 挪得动", order() === "绿红蓝" && names(log) === "itemschange", `order=${order()} events=${names(log)}`);
+  el.canEdit = () => { throw new Error("boom"); };
+  menu.items(); log.length = 0; menu.pick("later"); await frame();
+  add("editGate:端口自己抛了 = 不知道让不让 → 不让", order() === "绿红蓝" && names(log) === "editrefused", `order=${order()} events=${names(log)}`);
+  el.remove();
+}
+
 async function textCards() {
   const el = mount(), log = listen(el), menu = fakeMenu(el);
   el.labels = { kindNames: { text: "文字" }, linkMissing: "内容不可用" };
@@ -383,6 +410,7 @@ try {
   await liveViaDeck();
   await liveGeneral();
   await reorderAndJump();
+  await editGate();
   await textCards();
   await linkedCards();
   await bottomFloor();

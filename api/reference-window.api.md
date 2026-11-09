@@ -423,6 +423,7 @@ export class WpReferenceWindow extends HTMLElement {
     attributeChangedCallback(name: string, oldV: string | null, newV: string | null): void;
     audioRates: readonly number[] | null;
     bottomFloor: number;
+    canEdit: (() => boolean) | null;
     clearAll(): void;
     // (undocumented)
     close(): void;

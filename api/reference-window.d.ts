@@ -341,6 +341,12 @@ export declare class WpReferenceWindow extends HTMLElement {
     /** 链接卡的内容端口（0.3.0）：bytes 为空、有 target 的非 live 卡从这里要内容。null = 这个宿主没有可链接的东西。 */
     linkProvider: RefLinkProvider | null;
     menuPort: RefMenuPort | null;
+    /** 0.6.0 宿主端口：现在让不让改这副牌——人在窗里挪卡、删卡、从 ＋ 菜单加一张宿主画面的卡之前问它。
+     *  返回 false = 不让：这一下什么都不做，发一个 `editrefused` 事件（宿主拿去提示，比如「这幅画锁着」）。null = 永远让（0.5 行为）。
+     *  **翻页、跳到某一张、缩放平移、播放不问**——那是看，不是改。宿主自己调的 addImage / addText / deck.add 也不问：宿主在调之前自己把关。
+     *  起因 = 家族「源文件原则上只读」（牌组跟着文档保存，文档锁着时不该在窗里改它；user 2026-11-08「参考窗那里也加一个让不让改的口」）。 */
+    canEdit: (() => boolean) | null;
+    private _mayEdit;
     /** 拖把地板（宿主注入 = ui/floating-window 运行时量的「顶栏下缘」；缺省 60 = 旧常数，裸挂可用）。
      *  拖 / 恢复 / 视口钳制三条路都吃它——出血区规则只准一个出处（2026-09-02 C2）。 */
     topFloor: number;

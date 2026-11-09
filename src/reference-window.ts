@@ -362,6 +362,17 @@ export class WpReferenceWindow extends HTMLElement {
   linkProvider: RefLinkProvider | null = null;
   // 宿主端口：＋ 菜单（一次性 set = ui/popup-menu 的 togglePopupMenu）。null = 没菜单（裸挂时 ＋ 无反应）。
   menuPort: RefMenuPort | null = null;
+  /** 0.6.0 宿主端口：现在让不让改这副牌——人在窗里挪卡、删卡、从 ＋ 菜单加一张宿主画面的卡之前问它。
+   *  返回 false = 不让：这一下什么都不做，发一个 `editrefused` 事件（宿主拿去提示，比如「这幅画锁着」）。null = 永远让（0.5 行为）。
+   *  **翻页、跳到某一张、缩放平移、播放不问**——那是看，不是改。宿主自己调的 addImage / addText / deck.add 也不问：宿主在调之前自己把关。
+   *  起因 = 家族「源文件原则上只读」（牌组跟着文档保存，文档锁着时不该在窗里改它；user 2026-11-08「参考窗那里也加一个让不让改的口」）。 */
+  canEdit: (() => boolean) | null = null;
+  private _mayEdit(): boolean {
+    let ok = true;
+    try { ok = !this.canEdit || this.canEdit() !== false; } catch { ok = false; }   // 端口自己抛了 = 不知道让不让 → 不让
+    if (!ok) this._emit("editrefused", {});
+    return ok;
+  }
   /** 拖把地板（宿主注入 = ui/floating-window 运行时量的「顶栏下缘」；缺省 60 = 旧常数，裸挂可用）。
    *  拖 / 恢复 / 视口钳制三条路都吃它——出血区规则只准一个出处（2026-09-02 C2）。 */
   topFloor = DRAG_TOP_FLOOR;
@@ -937,6 +948,7 @@ export class WpReferenceWindow extends HTMLElement {
     const cur = this._deck.current;
     const to = this._deck.index + delta;
     if (!cur || to < 0 || to >= this._deck.size) return;
+    if (!this._mayEdit()) return;   // 0.6.0：宿主说现在不让改
     this._saveCurrentVp();
     this._mute(() => this._deck.move(cur.id, to));
     this._afterItemsChanged();
@@ -961,6 +973,7 @@ export class WpReferenceWindow extends HTMLElement {
   private _deleteCurrent() {
     const cur = this._deck.current;
     if (!cur) return;
+    if (!this._mayEdit()) return;   // 0.6.0：宿主说现在不让改
     this._bitmaps.get(cur.id)?.close?.();
     this._bitmaps.delete(cur.id);
     this._mute(() => this._deck.remove(cur.id));
@@ -1450,6 +1463,7 @@ export class WpReferenceWindow extends HTMLElement {
         else if (id === "paste") this._emit("requestpaste");
         else if (id === "cloud") this._emit("requestcloudload");
         else if (id === "live" || id.startsWith("live:")) {
+          if (!this._mayEdit()) return;   // 0.6.0：加一张宿主画面的卡也是改牌组
           const t = this._liveMenuTargets().find((x) => this._liveMenuId(x.target) === id);
           this.showLive(t?.target ?? null, t?.target == null ? "" : t.label);
           this._emitItems();

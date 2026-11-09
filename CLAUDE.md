@@ -47,3 +47,4 @@
   - 升级不丢东西（统筹 10-21 点名核）：新默认只管**新导入**的；0.4.x 存过的音视频（带 `src`）开出来字节都在、再存 `src` 还在，不会被改成空位——`test/manifest.test.mjs`「升级不丢东西」守着。
   - **宿主要做的**（各自会话收）：① 内联 `skip-prev` / `skip-next`；② `labels` 加 `prevFrame` / `nextFrame`；③ 读清单后看 `decoded.verdict === "newer-minor"` 提示一次；④ 导入漏斗的 `kinds` 若是自己传的，加 `"video"`；不想音频默认只放内存的传 `defaultRam: { audio: false }`；⑤ 真机（iPad Edge）验视频逐帧一次。
   - **不做**：多个参考窗同屏（user 10-21「不要」）。
+- **0.6.0（2026-11-08；user「参考窗那里也加一个让不让改的口，可以加一个小版本」）：`canEdit` 端口**。宿主设 `el.canEdit = () => boolean`；人在窗里挪卡、删卡、从 ＋ 菜单加一张宿主画面的卡之前问它，false = 这一下不做并发 `editrefused`（宿主拿去提示）；端口自己抛了按不让算。**翻页、跳转、缩放平移、播放不问**（那是看）。宿主自己调的 `addImage` / `addText` / `deck.add` 不问（宿主调之前自己把关）。null = 0.5 行为。起因 = 家族「源文件原则上只读」：牌组跟着文档保存，文档锁着时不该在窗里改。探针 `editGate()` 5 条。宿主要做的：设 `canEdit`、听 `editrefused`。added by Claude Fable 5.1 2026-11-08
